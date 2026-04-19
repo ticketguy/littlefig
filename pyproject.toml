@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "little-fig"
+version = "0.1.0"
+description = "Little Fig: The Independent CPU-First AI Engine"
+dependencies = [
+    "torch",
+    "transformers",
+    "gradio",
+    "accelerate"
+]
+
+[project.scripts]
+start-little-fig = "little_fig:start"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["little_fig*"]

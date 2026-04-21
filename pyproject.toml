@@ -4,17 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-fig"
-version = "0.1.0"
-description = "Little Fig: The Independent CPU-First AI Engine"
+version = "0.3.0"
+description = "Little Fig: CPU-native LLM inference and fine-tuning engine"
+readme = "README.md"
+requires-python = ">=3.9"
+
 dependencies = [
-    "torch",
-    "transformers",
-    "gradio",
-    "accelerate"
+    # NOTE: torch is NOT listed here intentionally.
+    # pip install torch by default grabs the CUDA build (~2.5GB).
+    # Install it manually first — see scripts/install_deps.py
+    # or run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+    "transformers>=4.38.0",
+    "accelerate>=0.27.0",
+    "sentencepiece",
+    "protobuf",
+    "gradio>=4.0.0",
 ]
 
+[project.optional-dependencies]
+
+# Fine-tuning: pip install -e ".[train]"
+train = [
+    "peft>=0.9.0",
+    "datasets>=2.18.0",
+    "trl>=0.8.0",
+]
+
+# NOTE: llama-cpp-python is NOT here intentionally.
+# It requires a platform-specific install to avoid accidentally
+# triggering a CUDA compile on CPU-only machines.
+#
+# Install it manually — see scripts/install_gguf.py
+
 [project.scripts]
-start-little-fig = "little_fig:start"
+little-fig       = "little_fig:start"
+little-fig-train = "little_fig.trainer:cli_train"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -319,10 +319,17 @@ def _create_model_for_arch(arch: str, model_name: str, reader):
                 cfg = text_cfg
             print(f"   ✓ Config: {cfg.__class__.__name__} from {hub_id}")
 
+            # Create on meta device first (instant, no RAM), then materialize
             try:
-                model = AutoModelForCausalLM.from_config(cfg)
+                with torch.device("meta"):
+                    model = AutoModelForCausalLM.from_config(cfg)
+                # Move to CPU with empty tensors
+                model = model.to_empty(device="cpu")
             except Exception:
-                model = _instantiate_model_from_config(cfg)
+                try:
+                    model = AutoModelForCausalLM.from_config(cfg)
+                except Exception:
+                    model = _instantiate_model_from_config(cfg)
             model.eval()
             return model, cfg
         except Exception as e:
@@ -438,6 +445,176 @@ def _find_tokenizer_for_arch(arch: str, model_name: str):
     return None
 
 
+# ── Strategy 3: Direct loading (no gguf-py TensorNameMap needed) ──────────────
+
+def _load_via_direct_mapping(gguf_path: str, arch: str, model_name: str):
+    """
+    Load a GGUF file by:
+    1. Downloading HF config from Hub → create empty model
+    2. Building GGUF→HF name map by matching tensor names heuristically
+    3. Dequantizing and loading weights
+
+    This works for architectures that gguf-py doesn't know yet (e.g. gemma4).
+    All it needs is a working AutoConfig on the Hub.
+    """
+    from gguf import GGUFReader, dequantize
+
+    reader = GGUFReader(gguf_path, mode="r")
+
+    # Step 1: Create model from Hub config
+    model, config = _create_model_for_arch(arch, model_name, reader)
+    model_state = model.state_dict()
+
+    # Step 2: Build GGUF name → HF name mapping
+    # Use the canonical GGUF naming conventions + the model's actual state_dict keys
+    gguf_to_hf = _build_heuristic_name_map(reader, model_state, arch)
+
+    print(f"   Mapped {len(gguf_to_hf)} GGUF tensors to HF state dict keys")
+
+    # Step 3: Load weights
+    loaded = 0
+    skipped = 0
+    total = len(reader.tensors)
+
+    for i, tensor in enumerate(reader.tensors):
+        gguf_name = tensor.name
+        shape = tensor.shape.tolist()
+
+        hf_name = gguf_to_hf.get(gguf_name)
+        if hf_name is None:
+            skipped += 1
+            continue
+
+        # Dequantize
+        qtype = tensor.tensor_type
+        data = tensor.data
+        if qtype.name == "F32":
+            arr = data.reshape(shape).astype(np.float32)
+        elif qtype.name == "F16":
+            arr = data.view(np.float16).reshape(shape).astype(np.float32)
+        elif qtype.name == "BF16":
+            raw = data.view(np.uint16)
+            arr = np.frombuffer(
+                np.left_shift(raw.astype(np.uint32), 16).tobytes(), dtype=np.float32
+            ).reshape(shape)
+        else:
+            arr = dequantize(data, qtype).reshape(shape)
+
+        fp32 = torch.from_numpy(arr.copy())
+        target_shape = model_state[hf_name].shape
+
+        if fp32.shape == target_shape:
+            model_state[hf_name].copy_(fp32)
+            loaded += 1
+        elif fp32.T.shape == target_shape:
+            model_state[hf_name].copy_(fp32.T.contiguous())
+            loaded += 1
+        else:
+            skipped += 1
+
+        del fp32, arr
+        if (i + 1) % 100 == 0:
+            print(f"   ... {i+1}/{total} tensors")
+
+    model.load_state_dict(model_state, strict=False)
+    print(f"   ✓ Loaded {loaded}/{total} tensors (skipped {skipped})")
+
+    tokenizer = _find_tokenizer_for_arch(arch, model_name)
+    return model, tokenizer
+
+
+def _build_heuristic_name_map(reader, model_state: dict, arch: str) -> dict:
+    """
+    Build GGUF tensor name → HF state dict key mapping heuristically.
+
+    Strategy: GGUF uses standardized names (blk.N.attn_q, token_embd, etc).
+    We convert those to various HF conventions and check if they exist
+    in the model's actual state_dict.
+    """
+    gguf_to_hf = {}
+    hf_keys = set(model_state.keys())
+
+    # Standard GGUF → HF rewrites (covers most architectures)
+    _rewrites = [
+        # Global
+        ("token_embd", "model.embed_tokens"),
+        ("output_norm", "model.norm"),
+        ("output", "lm_head"),
+        # Gemma 4 / 3n specific
+        ("per_layer_token_embd", "model.embed_tokens_per_layer"),
+        ("per_layer_model_proj", "model.per_layer_model_projection"),
+        ("per_layer_proj_norm", "model.per_layer_projection_norm"),
+        ("altup_proj", "model.altup_projections"),
+        ("altup_unembd_proj", "model.altup_unembed_projections"),
+    ]
+
+    _layer_rewrites = [
+        # Standard attention
+        ("attn_q", "self_attn.q_proj"), ("attn_k", "self_attn.k_proj"),
+        ("attn_v", "self_attn.v_proj"), ("attn_output", "self_attn.o_proj"),
+        ("attn_q_norm", "self_attn.q_norm"), ("attn_k_norm", "self_attn.k_norm"),
+        # MLP
+        ("ffn_gate", "mlp.gate_proj"), ("ffn_up", "mlp.up_proj"), ("ffn_down", "mlp.down_proj"),
+        # Norms
+        ("attn_norm", "input_layernorm"), ("ffn_norm", "pre_feedforward_layernorm"),
+        ("post_attention_norm", "post_attention_layernorm"),
+        ("post_ffw_norm", "post_feedforward_layernorm"),
+        # Laurel
+        ("laurel_l", "laurel.linear_left"), ("laurel_r", "laurel.linear_right"),
+        ("laurel_post_norm", "laurel.post_laurel_norm"),
+        # PLE
+        ("inp_gate", "per_layer_input_gate"),
+        ("post_norm", "post_per_layer_input_norm"),
+        # AltUp
+        ("altup_correct_coef", "altup.correction_coefs"),
+        ("altup_predict_coef", "altup.prediction_coefs"),
+        ("altup_router", "altup.modality_router"),
+        ("altup_router_norm", "altup.router_norm"),
+    ]
+
+    for tensor in reader.tensors:
+        name = tensor.name
+        candidates = set()
+
+        # Try global rewrites
+        for gguf_pfx, hf_pfx in _rewrites:
+            if name.startswith(gguf_pfx):
+                rest = name[len(gguf_pfx):]
+                candidate = hf_pfx + rest
+                if not candidate.endswith(".weight") and not candidate.endswith(".bias"):
+                    candidates.add(candidate + ".weight")
+                candidates.add(candidate)
+
+        # Try layer rewrites (blk.N.xxx → model.layers.N.xxx)
+        if name.startswith("blk."):
+            parts = name.split(".", 2)  # ['blk', 'N', 'rest']
+            if len(parts) >= 3:
+                layer_n = parts[1]
+                rest = parts[2]
+                for gguf_sub, hf_sub in _layer_rewrites:
+                    if rest.startswith(gguf_sub):
+                        suffix = rest[len(gguf_sub):]
+                        candidate = f"model.layers.{layer_n}.{hf_sub}{suffix}"
+                        if not candidate.endswith(".weight") and not candidate.endswith(".bias"):
+                            candidates.add(candidate + ".weight")
+                        candidates.add(candidate)
+                # Also try blk.N.proj → model.layers.N.per_layer_projection
+                if rest.startswith("proj"):
+                    suffix = rest[4:]  # skip "proj"
+                    candidate = f"model.layers.{layer_n}.per_layer_projection{suffix}"
+                    if not candidate.endswith(".weight"):
+                        candidates.add(candidate + ".weight")
+                    candidates.add(candidate)
+
+        # Find matching HF key
+        for c in candidates:
+            if c in hf_keys:
+                gguf_to_hf[name] = c
+                break
+
+    return gguf_to_hf
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def load_gguf_as_fig_model(
@@ -478,24 +655,36 @@ def load_gguf_as_fig_model(
             model, tokenizer = _load_via_tensor_name_map(gguf_path, arch)
     else:
         # ── Strategy 2: gguf-py TensorNameMap ─────────────────────────────
-        print(f"   Architecture '{arch}' not in transformers GGUF loader")
-        print(f"   Using gguf-py TensorNameMap fallback...")
-        try:
-            model, tokenizer = _load_via_tensor_name_map(gguf_path, arch)
-        except Exception as e:
-            error_msg = str(e)
-            # If this looks like an outdated-transformers error, try auto-upgrade
-            if "does not recognize" in error_msg or "not support" in error_msg:
-                _try_upgrade_transformers()
-            raise RuntimeError(
-                f"Could not load GGUF file: {gguf_path}\n"
-                f"Architecture: {arch}\n"
-                f"Error: {e}\n\n"
-                f"Fix: pip install --upgrade transformers gguf\n"
-                f"     (then restart little-fig)\n\n"
-                f"If that doesn't work:\n"
-                f"     pip install git+https://github.com/huggingface/transformers.git"
-            ) from e
+        arch_enum = _get_arch_enum(arch)
+        if arch_enum is not None:
+            print(f"   Architecture '{arch}' not in transformers GGUF, using gguf-py fallback...")
+            try:
+                model, tokenizer = _load_via_tensor_name_map(gguf_path, arch)
+            except Exception as e:
+                print(f"   ⚠ gguf-py fallback failed: {e}")
+                # Fall through to strategy 3
+                model, tokenizer = _load_via_direct_mapping(gguf_path, arch, model_name)
+        else:
+            # ── Strategy 3: Direct loading (Hub config + manual name map) ──
+            # gguf-py doesn't know this arch at all. Create model from Hub
+            # config and map tensor names ourselves.
+            print(f"   Architecture '{arch}' not in transformers GGUF or gguf-py")
+            print(f"   Using direct loading (Hub config + heuristic name mapping)...")
+            try:
+                model, tokenizer = _load_via_direct_mapping(gguf_path, arch, model_name)
+            except Exception as e:
+                error_msg = str(e)
+                if "does not recognize" in error_msg or "not support" in error_msg:
+                    _try_upgrade_transformers()
+                raise RuntimeError(
+                    f"Could not load GGUF file: {gguf_path}\n"
+                    f"Architecture: {arch}\n"
+                    f"Error: {e}\n\n"
+                    f"Fix: pip install --upgrade transformers gguf\n"
+                    f"     (then restart little-fig)\n\n"
+                    f"If that doesn't work:\n"
+                    f"     pip install git+https://github.com/huggingface/transformers.git"
+                ) from e
 
     model.eval()
 

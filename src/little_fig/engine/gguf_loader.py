@@ -275,21 +275,45 @@ def _load_via_tensor_name_map(gguf_path: str, arch: str):
     return model, tokenizer
 
 
+def _try_upgrade_transformers():
+    """
+    Attempt to upgrade transformers to get support for new architectures.
+    Returns True if upgrade succeeded and a reimport might help.
+    """
+    import subprocess
+    print(f"\n   🔄 Auto-upgrading transformers to support new architecture...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "transformers"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            print(f"   ✓ transformers upgraded successfully")
+            print(f"   ⚠ Please restart little-fig for the upgrade to take effect.\n")
+            return True
+        else:
+            print(f"   ⚠ Upgrade failed: {result.stderr[:200]}")
+            return False
+    except Exception as e:
+        print(f"   ⚠ Upgrade failed: {e}")
+        return False
+
+
 def _create_model_for_arch(arch: str, model_name: str, reader):
     """
     Create an empty HF model for a given architecture.
-    Tries Hub config download first, then manual construction.
+    Tries Hub config download first.  If transformers doesn't recognise
+    the model_type, offers to auto-upgrade transformers.
     """
     from transformers import AutoConfig, AutoModelForCausalLM
 
-    # Try to find a Hub model ID that matches this architecture
     hub_candidates = _guess_hub_id(arch, model_name)
+    last_error = None
 
     for hub_id in hub_candidates:
         try:
             print(f"   Trying config from {hub_id}...")
             cfg = AutoConfig.from_pretrained(hub_id)
-            # For multimodal models, use the text sub-config
             text_cfg = getattr(cfg, "text_config", None)
             if text_cfg is not None:
                 cfg = text_cfg
@@ -298,18 +322,31 @@ def _create_model_for_arch(arch: str, model_name: str, reader):
             try:
                 model = AutoModelForCausalLM.from_config(cfg)
             except Exception:
-                # Some configs need their specific model class
                 model = _instantiate_model_from_config(cfg)
             model.eval()
             return model, cfg
         except Exception as e:
+            last_error = str(e)
             print(f"   ⚠ {hub_id}: {e}")
             continue
 
+    # If we get here, config loading failed — likely outdated transformers
+    if last_error and "does not recognize this architecture" in last_error:
+        upgraded = _try_upgrade_transformers()
+        if upgraded:
+            raise RuntimeError(
+                f"Architecture '{arch}' requires a newer version of transformers.\n"
+                f"We just upgraded it — please restart little-fig:\n\n"
+                f"  Close this window and run: little-fig\n"
+            )
+
     raise RuntimeError(
         f"Could not create model for architecture '{arch}'.\n"
-        f"No matching HuggingFace config found.\n"
-        f"Try updating: pip install --upgrade transformers"
+        f"Your transformers version doesn't support this model yet.\n\n"
+        f"Fix: pip install --upgrade transformers\n"
+        f"     (then restart little-fig)\n\n"
+        f"If that doesn't work, this model may need the bleeding-edge version:\n"
+        f"     pip install git+https://github.com/huggingface/transformers.git"
     )
 
 
@@ -446,13 +483,18 @@ def load_gguf_as_fig_model(
         try:
             model, tokenizer = _load_via_tensor_name_map(gguf_path, arch)
         except Exception as e:
+            error_msg = str(e)
+            # If this looks like an outdated-transformers error, try auto-upgrade
+            if "does not recognize" in error_msg or "not support" in error_msg:
+                _try_upgrade_transformers()
             raise RuntimeError(
                 f"Could not load GGUF file: {gguf_path}\n"
                 f"Architecture: {arch}\n"
                 f"Error: {e}\n\n"
-                f"This architecture may be too new. Try:\n"
-                f"  pip install --upgrade transformers gguf\n"
-                f"Or use a different model format (HuggingFace safetensors)."
+                f"Fix: pip install --upgrade transformers gguf\n"
+                f"     (then restart little-fig)\n\n"
+                f"If that doesn't work:\n"
+                f"     pip install git+https://github.com/huggingface/transformers.git"
             ) from e
 
     model.eval()

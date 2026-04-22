@@ -1,408 +1,401 @@
 <!DOCTYPE html>
-<html lang="en" class="light">
+<html lang="en" class="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🍐 Little Fig</title>
+<title>Little Fig</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍐</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script>
-tailwind.config = {
-  darkMode: 'class',
-  theme: {
-    extend: {
-      fontFamily: { sans: ['Inter', 'system-ui'], mono: ['JetBrains Mono', 'monospace'] },
-      colors: { fig: { 50:'#ecfdf5', 100:'#d1fae5', 200:'#a7f3d0', 300:'#6ee7b7', 400:'#34d399', 500:'#10b981', 600:'#059669', 700:'#047857', 800:'#065f46', 900:'#064e3b', 950:'#022c22' }},
-    }
-  }
-}
+tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','system-ui'],mono:['JetBrains Mono','monospace']},colors:{fig:{50:'#ecfdf5',100:'#d1fae5',200:'#a7f3d0',300:'#6ee7b7',400:'#34d399',500:'#10b981',600:'#059669',700:'#047857',800:'#065f46',900:'#064e3b',950:'#022c22'}}}}}
 </script>
-<script>
-  // Anti-flash: apply dark before paint
-  (function(){
-    let t = localStorage.getItem('fig-theme');
-    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    if (t === 'dark') document.documentElement.classList.replace('light','dark');
-  })();
-</script>
+<script>(function(){let t=localStorage.getItem('fig-theme');if(!t)t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.className=t;})()</script>
 <style>
-  body { font-family: 'Inter', system-ui, sans-serif; }
-  .msg-user { background: linear-gradient(135deg, #059669, #10b981); }
-  .scrollbar-thin::-webkit-scrollbar { width: 6px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
-  .dark .scrollbar-thin::-webkit-scrollbar-thumb { background: #475569; }
-  @keyframes pulse-dot { 0%,80%,100%{opacity:.3} 40%{opacity:1} }
-  .typing-dot { animation: pulse-dot 1.4s infinite; }
-  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+body{font-family:'Inter',system-ui,sans-serif;margin:0}
+.scrollbar-thin::-webkit-scrollbar{width:5px}
+.scrollbar-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
+.light .scrollbar-thin::-webkit-scrollbar-thumb{background:#cbd5e1}
+@keyframes pulse-dot{0%,80%,100%{opacity:.3}40%{opacity:1}}
+.typing-dot{animation:pulse-dot 1.4s infinite}
+.typing-dot:nth-child(2){animation-delay:.2s}
+.typing-dot:nth-child(3){animation-delay:.4s}
+.tab-btn{transition:all .15s}
+.tab-btn.active{color:#10b981;border-bottom:2px solid #10b981}
+.msg-user{background:linear-gradient(135deg,#059669,#10b981)}
+.sidebar-transition{transition:width .2s ease,opacity .2s ease}
+pre code{font-size:.8rem}
 </style>
 </head>
-<body class="bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 h-screen flex overflow-hidden transition-colors duration-200">
+<body class="bg-white dark:bg-black text-slate-900 dark:text-slate-100 h-screen flex overflow-hidden">
 
 <!-- ═══ SIDEBAR ═══ -->
-<aside id="sidebar" class="w-72 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex-shrink-0">
-  <!-- Logo -->
-  <div class="px-5 pt-5 pb-3 flex items-center gap-3">
-    <span class="text-3xl">🍐</span>
-    <div>
-      <h1 class="text-lg font-extrabold text-fig-600 dark:text-fig-400 leading-tight">Little Fig</h1>
-      <p class="text-[0.65rem] font-medium text-slate-400 dark:text-slate-500">v0.5 · Fig Engine</p>
+<aside id="sidebar" class="sidebar-transition w-64 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a] flex-shrink-0 overflow-hidden">
+  <div class="flex-1 overflow-y-auto scrollbar-thin">
+    <!-- Logo + collapse -->
+    <div class="px-4 pt-4 pb-2 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <span class="text-2xl">🍐</span>
+        <div><h1 class="text-base font-extrabold text-fig-500 leading-tight">Little Fig</h1><p class="text-[0.6rem] text-slate-500">v0.5 · Fig Engine</p></div>
+      </div>
+      <button id="collapse-btn" class="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400" title="Collapse sidebar">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M11 19l-7-7 7-7M18 19l-7-7 7-7"/></svg>
+      </button>
+    </div>
+
+    <div class="px-3 space-y-3 text-sm">
+      <!-- Model -->
+      <div>
+        <label class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600">Model</label>
+        <input id="model-input" type="text" placeholder="HF ID or local path…" class="mt-1 w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-black focus:ring-1 focus:ring-fig-500 outline-none">
+        <div class="flex gap-1.5 mt-1.5">
+          <button id="load-btn" class="flex-1 px-2 py-1 text-[0.65rem] font-semibold rounded-md bg-fig-600 hover:bg-fig-700 text-white">Load</button>
+          <button id="browse-btn" class="px-2 py-1 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900" title="Browse local files">📁</button>
+          <button id="unload-btn" class="px-2 py-1 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900">Unload</button>
+        </div>
+        <div id="model-status" class="mt-1.5"></div>
+      </div>
+
+      <!-- Params -->
+      <details open class="group">
+        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">Parameters</summary>
+        <div class="mt-1.5 space-y-2">
+          <div><div class="flex justify-between text-[0.65rem] text-slate-500"><span>Temperature</span><span id="temp-v" class="font-mono">0.7</span></div><input id="temperature" type="range" min="0.01" max="2" step="0.05" value="0.7" class="w-full h-1 accent-fig-500"></div>
+          <div><div class="flex justify-between text-[0.65rem] text-slate-500"><span>Max tokens</span><span id="maxtok-v" class="font-mono">512</span></div><input id="max-tokens" type="range" min="64" max="4096" step="64" value="512" class="w-full h-1 accent-fig-500"></div>
+        </div>
+      </details>
+
+      <!-- System Prompt -->
+      <details class="group">
+        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">System Prompt</summary>
+        <textarea id="system-prompt" rows="3" class="mt-1.5 w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-black resize-none outline-none focus:ring-1 focus:ring-fig-500">You are a helpful, concise AI assistant.</textarea>
+      </details>
+
+      <!-- Hardware -->
+      <details open class="group">
+        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">Hardware</summary>
+        <div id="hw-info" class="mt-1.5 space-y-0.5 text-[0.65rem] font-mono text-slate-500"></div>
+      </details>
     </div>
   </div>
 
-  <div class="flex-1 overflow-y-auto px-4 pb-4 scrollbar-thin space-y-4">
-    <!-- Model -->
-    <div>
-      <label class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">Model</label>
-      <input id="model-input" type="text" placeholder="HuggingFace ID or local path…"
-        class="mt-1 w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 focus:ring-2 focus:ring-fig-500 focus:border-transparent outline-none transition"
-      >
-      <p class="text-[0.6rem] text-slate-400 mt-1">e.g. Qwen/Qwen2.5-0.5B-Instruct</p>
-      <div class="flex gap-2 mt-2">
-        <button id="load-btn" class="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-fig-600 hover:bg-fig-700 text-white transition">Load</button>
-        <button id="unload-btn" class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition">Unload</button>
-      </div>
-      <div id="model-status" class="mt-2"></div>
-    </div>
-
-    <!-- Parameters -->
-    <details open>
-      <summary class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 cursor-pointer select-none">Parameters</summary>
-      <div class="mt-2 space-y-3">
-        <div>
-          <div class="flex justify-between text-xs text-slate-500"><span>Temperature</span><span id="temp-val" class="font-mono">0.7</span></div>
-          <input id="temperature" type="range" min="0.01" max="2" step="0.05" value="0.7" class="w-full h-1.5 accent-fig-500 mt-1">
-        </div>
-        <div>
-          <div class="flex justify-between text-xs text-slate-500"><span>Max tokens</span><span id="maxtok-val" class="font-mono">512</span></div>
-          <input id="max-tokens" type="range" min="64" max="4096" step="64" value="512" class="w-full h-1.5 accent-fig-500 mt-1">
-        </div>
-        <div>
-          <div class="flex justify-between text-xs text-slate-500"><span>Top-P</span><span id="topp-val" class="font-mono">0.9</span></div>
-          <input id="top-p" type="range" min="0.01" max="1" step="0.05" value="0.9" class="w-full h-1.5 accent-fig-500 mt-1">
-        </div>
-      </div>
-    </details>
-
-    <!-- System Prompt -->
-    <details>
-      <summary class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 cursor-pointer select-none">System Prompt</summary>
-      <textarea id="system-prompt" rows="3" class="mt-2 w-full px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 resize-none outline-none focus:ring-2 focus:ring-fig-500">You are a helpful, concise AI assistant.</textarea>
-    </details>
-
-    <!-- Hardware -->
-    <div>
-      <label class="text-[0.65rem] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">Hardware</label>
-      <div id="hw-badge" class="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fig-50 dark:bg-fig-950 text-fig-600 dark:text-fig-400 text-[0.7rem] font-mono font-medium">
-        Loading…
-      </div>
-    </div>
-  </div>
-
-  <!-- Bottom: theme toggle -->
-  <div class="px-4 py-3 border-t border-slate-200 dark:border-slate-800">
-    <button id="theme-toggle" class="w-full px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center justify-center gap-2">
-      <span id="theme-icon">🌙</span> <span id="theme-label">Dark mode</span>
-    </button>
+  <!-- Bottom -->
+  <div class="px-3 py-2 border-t border-slate-200 dark:border-slate-800 flex gap-1.5">
+    <button id="theme-btn" class="flex-1 px-2 py-1.5 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 flex items-center justify-center gap-1.5"><span id="theme-icon">☀️</span><span id="theme-label">Light</span></button>
+    <button id="help-btn" class="px-2 py-1.5 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900" title="Help & Docs">❓</button>
   </div>
 </aside>
 
-<!-- ═══ MAIN ═══ -->
-<main class="flex-1 flex flex-col h-full">
-  <!-- Chat messages -->
-  <div id="chat-messages" class="flex-1 overflow-y-auto px-6 py-4 scrollbar-thin">
-    <!-- Empty state -->
-    <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center">
-      <p class="text-5xl mb-4">🍐</p>
-      <h2 class="text-xl font-bold text-fig-600 dark:text-fig-400">Little Fig</h2>
-      <p class="text-sm text-slate-400 dark:text-slate-500 mt-2 max-w-xs">Load a model from the sidebar, then start chatting. Supports text, images, and files.</p>
-    </div>
-  </div>
+<!-- Collapsed sidebar toggle -->
+<button id="expand-btn" class="hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M13 5l7 7-7 7M6 5l7 7-7 7"/></svg>
+</button>
 
-  <!-- Input area -->
-  <div class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4 py-3">
-    <div class="max-w-3xl mx-auto flex items-end gap-2">
-      <!-- File upload -->
-      <label class="cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Attach files">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-        <input id="file-input" type="file" multiple accept="image/*,audio/*,.pdf,.txt,.py,.json,.csv" class="hidden">
-      </label>
-      <!-- Text input -->
-      <div class="flex-1 relative">
-        <div id="file-preview" class="hidden flex flex-wrap gap-1 mb-1"></div>
-        <textarea id="chat-input" rows="1" placeholder="Message Little Fig…"
-          class="w-full px-4 py-2.5 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 resize-none outline-none focus:ring-2 focus:ring-fig-500 focus:border-transparent transition max-h-32"
-        ></textarea>
+<!-- ═══ MAIN ═══ -->
+<main class="flex-1 flex flex-col h-full min-w-0">
+  <!-- Tabs -->
+  <nav class="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0a0a0a] px-4 flex-shrink-0">
+    <button class="tab-btn active px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="chat">💬 Chat</button>
+    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="training">🏋️ Training</button>
+    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="terminal">🖥️ Terminal</button>
+    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="docs">📖 Docs</button>
+  </nav>
+
+  <!-- Tab content -->
+  <div class="flex-1 overflow-hidden relative">
+
+    <!-- ── CHAT TAB ── -->
+    <div id="tab-chat" class="tab-content absolute inset-0 flex flex-col">
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 scrollbar-thin">
+        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center select-none">
+          <p class="text-5xl mb-3 opacity-80">🍐</p>
+          <h2 class="text-lg font-bold text-fig-500">Little Fig</h2>
+          <p class="text-xs text-slate-400 dark:text-slate-600 mt-1.5 max-w-xs">Load a model from the sidebar, then start chatting. Supports text, images, and file attachments.</p>
+        </div>
       </div>
-      <!-- Send -->
-      <button id="send-btn" class="p-2.5 rounded-xl bg-fig-600 hover:bg-fig-700 text-white transition disabled:opacity-40 disabled:cursor-not-allowed" title="Send">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-      </button>
+      <div class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0a0a0a] px-3 py-2">
+        <div class="max-w-3xl mx-auto flex items-end gap-2">
+          <label class="cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-400" title="Attach files">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+            <input id="file-input" type="file" multiple accept="image/*,audio/*,.pdf,.txt,.py,.json,.csv" class="hidden">
+          </label>
+          <div class="flex-1"><div id="file-preview" class="hidden flex flex-wrap gap-1 mb-1"></div><textarea id="chat-input" rows="1" placeholder="Message…" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-black resize-none outline-none focus:ring-1 focus:ring-fig-500 max-h-28"></textarea></div>
+          <button id="send-btn" class="p-2 rounded-xl bg-fig-600 hover:bg-fig-700 text-white disabled:opacity-30" title="Send"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg></button>
+          <button id="copy-chat-btn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-400" title="Copy conversation"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TRAINING TAB ── -->
+    <div id="tab-training" class="tab-content absolute inset-0 hidden overflow-y-auto p-6 scrollbar-thin">
+      <div class="max-w-4xl mx-auto space-y-6">
+        <div><h2 class="text-lg font-bold text-fig-500">🏋️ Training Ground</h2><p class="text-xs text-slate-500 mt-1">Fine-tune models with Fig Engine. Four training tiers auto-selected based on your RAM.</p></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
+            <h3 class="text-sm font-bold text-fig-500">Tier 1: Streaming LoRA</h3>
+            <p class="text-[0.7rem] text-slate-500 mt-1">INT4 base + FP32 LoRA adapters. ~400MB for 1.1B. Fast.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
+            <h3 class="text-sm font-bold text-fig-500">Tier 2: LISA</h3>
+            <p class="text-[0.7rem] text-slate-500 mt-1">Rotating layer unfreezing. 10-35% better than LoRA.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
+            <h3 class="text-sm font-bold text-fig-500">Tier 3: MeZO</h3>
+            <p class="text-[0.7rem] text-slate-500 mt-1">Zero-order optimization. No backward pass needed.</p>
+          </div>
+          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
+            <h3 class="text-sm font-bold text-fig-500">Tier 4: LOMO</h3>
+            <p class="text-[0.7rem] text-slate-500 mt-1">Fused gradient + update. Full fine-tune quality.</p>
+          </div>
+        </div>
+        <div class="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">
+          🚧 Training UI coming soon — use the Python API for now:<br>
+          <code class="text-fig-500 font-mono">from little_fig.engine import FigTrainer</code>
+        </div>
+        <div class="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">
+          🧠 <b>FigSpace</b> (model arena), <b>RL Ground</b>, <b>Checkpoints</b>, <b>Benchmarks</b> — coming in v0.6
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TERMINAL TAB ── -->
+    <div id="tab-terminal" class="tab-content absolute inset-0 hidden flex flex-col">
+      <div id="terminal" class="flex-1 overflow-y-auto p-4 font-mono text-xs bg-black text-green-400 scrollbar-thin"></div>
+      <div class="border-t border-slate-800 bg-[#0a0a0a] px-4 py-2 flex gap-2">
+        <button id="refresh-logs" class="px-3 py-1 text-[0.65rem] font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-300">Refresh</button>
+        <button id="auto-scroll" class="px-3 py-1 text-[0.65rem] font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-300">Auto-scroll: ON</button>
+      </div>
+    </div>
+
+    <!-- ── DOCS TAB ── -->
+    <div id="tab-docs" class="tab-content absolute inset-0 hidden overflow-y-auto p-6 scrollbar-thin">
+      <div class="max-w-3xl mx-auto prose prose-sm dark:prose-invert prose-headings:text-fig-500">
+        <h1>📖 Little Fig Documentation</h1>
+        <h2>Quick Start</h2>
+        <ol>
+          <li><b>Load a model</b> — Type a HuggingFace model ID (e.g. <code>Qwen/Qwen2.5-0.5B-Instruct</code>) or a local path to a <code>.gguf</code> file in the sidebar, then click <b>Load</b>.</li>
+          <li><b>Chat</b> — Type a message and press Enter. Responses stream in real-time via WebSocket.</li>
+          <li><b>Attach files</b> — Click the 📎 icon to attach images, PDFs, code files, or audio.</li>
+        </ol>
+        <h2>Model Loading</h2>
+        <p>Little Fig's universal GGUF loader auto-detects any architecture. It tries:</p>
+        <ol>
+          <li><b>transformers built-in</b> (22+ architectures)</li>
+          <li><b>gguf-py TensorNameMap</b> fallback (122+ architectures)</li>
+          <li>Auto-upgrades transformers if architecture is too new</li>
+        </ol>
+        <p>You can also use the <b>📁 Browse</b> button to navigate your local filesystem.</p>
+        <h2>Fig Engine</h2>
+        <p>The core engine uses INT4 streaming quantization (7.4× compression) with adaptive codebook fitting (FigQuant) and torch.compile fused operations (FigKernel).</p>
+        <table>
+          <tr><th>Component</th><th>What it does</th></tr>
+          <tr><td><b>FigQuant</b></td><td>Adaptive codebook INT4 — 9.7% less error than standard INT4</td></tr>
+          <tr><td><b>FigKernel</b></td><td>Fused ops via torch.compile — 2.95× faster RMSNorm</td></tr>
+          <tr><td><b>FigPipeline</b></td><td>Async GPU-CPU training — optimizer states on CPU</td></tr>
+          <tr><td><b>FigLinear</b></td><td>INT4 base + LoRA adapters, fast/low-RAM modes</td></tr>
+        </table>
+        <h2>Training (Python API)</h2>
+        <pre><code>from little_fig.engine import FigModel, FigTrainer, FigTrainingConfig
+
+model = FigModel.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0", lora_r=16)
+config = FigTrainingConfig(num_epochs=3, learning_rate=2e-4)
+trainer = FigTrainer(model, config)
+trainer.load_dataset("tatsu-lab/alpaca")
+trainer.train()</code></pre>
+        <h2>Keyboard Shortcuts</h2>
+        <table>
+          <tr><td><kbd>Enter</kbd></td><td>Send message</td></tr>
+          <tr><td><kbd>Shift+Enter</kbd></td><td>New line</td></tr>
+          <tr><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy conversation</td></tr>
+        </table>
+        <h2>Troubleshooting</h2>
+        <p><b>Model fails to load?</b> Run <code>pip install --upgrade transformers gguf</code> and restart.</p>
+        <p><b>Out of memory?</b> Use a smaller model (GPT-2, Qwen 0.5B) or free up RAM.</p>
+        <p><b>Gemma 4 not loading?</b> Your transformers version needs updating: <code>pip install git+https://github.com/huggingface/transformers.git</code></p>
+      </div>
     </div>
   </div>
 </main>
 
+<!-- ═══ FILE BROWSER MODAL ═══ -->
+<div id="file-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+  <div class="w-[500px] max-h-[70vh] bg-white dark:bg-[#111] rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
+    <div class="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800">
+      <span class="text-sm font-bold">📁 Browse Local Models</span>
+      <button id="close-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">&times;</button>
+    </div>
+    <div id="file-path-bar" class="px-4 py-1.5 text-[0.65rem] font-mono text-slate-500 bg-slate-50 dark:bg-black border-b border-slate-200 dark:border-slate-800 truncate"></div>
+    <div id="file-list" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+  </div>
+</div>
+
 <script>
-// ═══════════════════════════════════════════════════════════════════════════════
-// Little Fig Frontend — Vanilla JS (no build step needed)
-// ═══════════════════════════════════════════════════════════════════════════════
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+let ws=null, history=[], streaming=false, attachedFiles=[], autoScroll=true;
 
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => document.querySelectorAll(s);
-
-// State
-let ws = null;
-let history = [];
-let streaming = false;
-let attachedFiles = [];
-
-// ── Theme Toggle ─────────────────────────────────────────────────────────────
-$('#theme-toggle').addEventListener('click', () => {
-  const html = document.documentElement;
-  const isDark = html.classList.contains('dark');
-  html.classList.toggle('dark', !isDark);
-  html.classList.toggle('light', isDark);
-  localStorage.setItem('fig-theme', isDark ? 'light' : 'dark');
-  $('#theme-icon').textContent = isDark ? '🌙' : '☀️';
-  $('#theme-label').textContent = isDark ? 'Dark mode' : 'Light mode';
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+$$('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    $$('.tab-btn').forEach(b=>{b.classList.remove('active');b.classList.remove('text-fig-500')});
+    btn.classList.add('active');btn.classList.add('text-fig-500');
+    $$('.tab-content').forEach(c=>c.classList.add('hidden'));
+    $(`#tab-${btn.dataset.tab}`).classList.remove('hidden');
+  });
 });
-// Init theme label
-if (document.documentElement.classList.contains('dark')) {
-  $('#theme-icon').textContent = '☀️';
-  $('#theme-label').textContent = 'Light mode';
+
+// ── Sidebar collapse ─────────────────────────────────────────────────────────
+$('#collapse-btn').addEventListener('click',()=>{$('#sidebar').classList.add('hidden');$('#expand-btn').classList.remove('hidden')});
+$('#expand-btn').addEventListener('click',()=>{$('#sidebar').classList.remove('hidden');$('#expand-btn').classList.add('hidden')});
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+$('#theme-btn').addEventListener('click',()=>{
+  const d=document.documentElement, isDark=d.classList.contains('dark');
+  d.className=isDark?'light':'dark';
+  localStorage.setItem('fig-theme',isDark?'light':'dark');
+  $('#theme-icon').textContent=isDark?'🌙':'☀️';
+  $('#theme-label').textContent=isDark?'Dark':'Light';
+});
+if(document.documentElement.classList.contains('light')){$('#theme-icon').textContent='🌙';$('#theme-label').textContent='Dark'}
+
+// ── Sliders ──────────────────────────────────────────────────────────────────
+$('#temperature').oninput=e=>$('#temp-v').textContent=e.target.value;
+$('#max-tokens').oninput=e=>$('#maxtok-v').textContent=e.target.value;
+
+// ── Hardware ─────────────────────────────────────────────────────────────────
+fetch('/api/health').then(r=>r.json()).then(d=>{
+  const h=d.hardware, p=d.platform;
+  let html='';
+  html+=`<div class="text-fig-500">${h.gpu?'⚡ '+h.gpu:'💻 '+h.cpu_name}</div>`;
+  html+=`<div>Cores: ${h.cpu_cores} · RAM: ${h.ram_available_gb}/${h.ram_total_gb} GB (${h.ram_used_pct}%)</div>`;
+  html+=`<div>Disk: ${h.disk_free_gb} GB free</div>`;
+  html+=`<div>PyTorch: ${h.torch_version} · Python: ${p.python}</div>`;
+  html+=`<div>${p.os} ${p.arch}</div>`;
+  $('#hw-info').innerHTML=html;
+  if(d.model_loaded){showStatus('ready',d.model_loaded.split('/').pop());$('#model-input').value=d.model_loaded}
+}).catch(()=>{$('#hw-info').innerHTML='<div class="text-red-400">Server unreachable</div>'});
+
+// ── Status ───────────────────────────────────────────────────────────────────
+function showStatus(t,txt){
+  const c={ready:'bg-fig-950 text-fig-400 border-fig-800',empty:'bg-amber-950 text-amber-400 border-amber-800',error:'bg-red-950 text-red-400 border-red-800',loading:'bg-blue-950 text-blue-400 border-blue-800'};
+  const cl={ready:'bg-fig-100 text-fig-700 border-fig-200',empty:'bg-amber-100 text-amber-700 border-amber-200',error:'bg-red-100 text-red-700 border-red-200',loading:'bg-blue-100 text-blue-700 border-blue-200'};
+  const isDark=document.documentElement.classList.contains('dark');
+  const colors=isDark?c:cl;
+  const icons={ready:'✓',empty:'○',error:'✗',loading:'⟳'};
+  $('#model-status').innerHTML=`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[0.6rem] font-semibold border ${colors[t]}">${icons[t]} ${txt}</span>`;
 }
 
-// ── Slider values ────────────────────────────────────────────────────────────
-$('#temperature').addEventListener('input', e => $('#temp-val').textContent = e.target.value);
-$('#max-tokens').addEventListener('input', e => $('#maxtok-val').textContent = e.target.value);
-$('#top-p').addEventListener('input', e => $('#topp-val').textContent = e.target.value);
+// ── Model Load ───────────────────────────────────────────────────────────────
+$('#load-btn').addEventListener('click',async()=>{
+  const id=$('#model-input').value.trim();
+  if(!id)return showStatus('empty','Enter a model ID');
+  showStatus('loading','Loading…');$('#load-btn').disabled=true;
+  try{const r=await fetch('/api/model/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:id})});const d=await r.json();
+  if(r.ok){showStatus('ready',id.split('/').pop());connectWS()}else showStatus('error',(d.detail||'Failed').substring(0,50))}
+  catch(e){showStatus('error',e.message.substring(0,50))}
+  $('#load-btn').disabled=false;
+});
+$('#unload-btn').addEventListener('click',async()=>{await fetch('/api/model/unload',{method:'POST'});showStatus('empty','No model');if(ws)ws.close()});
 
-// ── Hardware info ────────────────────────────────────────────────────────────
-fetch('/api/health').then(r => r.json()).then(data => {
-  const hw = data.hardware;
-  const badge = hw.gpu
-    ? `⚡ ${hw.gpu} · ${hw.gpu_vram_gb}GB`
-    : `💻 CPU · ${hw.cpu_cores} cores · ${hw.ram_available_gb}GB free`;
-  $('#hw-badge').textContent = badge;
-  if (data.model_loaded) {
-    showStatus('ready', data.model_loaded.split('/').pop());
-    $('#model-input').value = data.model_loaded;
-  }
-}).catch(() => { $('#hw-badge').textContent = '⚠ Server unreachable'; });
-
-// ── Model Load/Unload ────────────────────────────────────────────────────────
-function showStatus(type, text) {
-  const colors = {
-    ready: 'bg-fig-100 dark:bg-fig-950 text-fig-700 dark:text-fig-400',
-    empty: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
-    error: 'bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-400',
-    loading: 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-400',
-  };
-  const icons = { ready: '✓', empty: '○', error: '✗', loading: '⟳' };
-  $('#model-status').innerHTML = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[0.7rem] font-semibold ${colors[type]}">${icons[type]} ${text}</span>`;
+// ── File Browser ─────────────────────────────────────────────────────────────
+$('#browse-btn').addEventListener('click',()=>{$('#file-modal').classList.remove('hidden');browseDir('.')});
+$('#close-modal').addEventListener('click',()=>$('#file-modal').classList.add('hidden'));
+$('#file-modal').addEventListener('click',e=>{if(e.target.id==='file-modal')$('#file-modal').classList.add('hidden')});
+async function browseDir(p){
+  const r=await fetch(`/api/files/browse?path=${encodeURIComponent(p)}`);const d=await r.json();
+  $('#file-path-bar').textContent=d.current;
+  let html='';
+  if(d.current!==d.parent)html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center gap-2" data-dir="${d.parent}">📁 <span class="text-slate-400">..</span></div>`;
+  d.entries.forEach(e=>{
+    if(e.is_dir)html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center gap-2" data-dir="${e.path}">📁 ${e.name}</div>`;
+    else html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center justify-between" data-file="${e.path}"><span>📄 ${e.name}</span><span class="text-slate-400 font-mono">${e.size_human}</span></div>`;
+  });
+  if(!d.entries.length)html='<div class="px-4 py-4 text-xs text-slate-400 text-center">No model files found here</div>';
+  $('#file-list').innerHTML=html;
+  $('#file-list').querySelectorAll('[data-dir]').forEach(el=>el.addEventListener('click',()=>browseDir(el.dataset.dir)));
+  $('#file-list').querySelectorAll('[data-file]').forEach(el=>el.addEventListener('click',()=>{$('#model-input').value=el.dataset.file;$('#file-modal').classList.add('hidden')}));
 }
-
-$('#load-btn').addEventListener('click', async () => {
-  const modelId = $('#model-input').value.trim();
-  if (!modelId) return showStatus('empty', 'Enter a model ID');
-  showStatus('loading', 'Loading…');
-  $('#load-btn').disabled = true;
-  try {
-    const res = await fetch('/api/model/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model_id: modelId }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      showStatus('ready', modelId.split('/').pop());
-      connectWS();
-    } else {
-      showStatus('error', data.detail?.substring(0, 60) || 'Load failed');
-    }
-  } catch (e) {
-    showStatus('error', e.message.substring(0, 60));
-  }
-  $('#load-btn').disabled = false;
-});
-
-$('#unload-btn').addEventListener('click', async () => {
-  await fetch('/api/model/unload', { method: 'POST' });
-  showStatus('empty', 'No model loaded');
-  if (ws) ws.close();
-});
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
-function connectWS() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/api/chat`);
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'chunk') {
-      updateLastAssistant(data.content);
-    } else if (data.type === 'done') {
-      finishStreaming(data.content, data.stats);
-    } else if (data.type === 'error') {
-      appendMessage('assistant', `❌ ${data.content}`);
-      streaming = false;
-      toggleInput(true);
-    } else if (data.type === 'start') {
-      appendMessage('assistant', '');
-      streaming = true;
-    }
+function connectWS(){
+  if(ws&&ws.readyState===WebSocket.OPEN)return;
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ws=new WebSocket(`${proto}://${location.host}/api/chat`);
+  ws.onmessage=e=>{const d=JSON.parse(e.data);
+    if(d.type==='start'){appendMsg('assistant','');streaming=true}
+    else if(d.type==='chunk')updateLast(d.content);
+    else if(d.type==='done'){finishStream(d.content,d.stats)}
+    else if(d.type==='error'){appendMsg('assistant','❌ '+d.content);streaming=false;toggleInput(true)}
   };
-  ws.onclose = () => { ws = null; };
+  ws.onclose=()=>{ws=null};
 }
 
-// ── Chat UI ──────────────────────────────────────────────────────────────────
-function appendMessage(role, content) {
-  $('#empty-state')?.remove();
-  const container = $('#chat-messages');
-  const wrapper = document.createElement('div');
-  wrapper.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'} mb-3`;
-
-  const bubble = document.createElement('div');
-  bubble.className = role === 'user'
-    ? 'msg-user text-white px-4 py-2.5 rounded-2xl rounded-br-md max-w-[75%] text-sm leading-relaxed'
-    : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-4 py-2.5 rounded-2xl rounded-bl-md max-w-[75%] text-sm leading-relaxed';
-  bubble.setAttribute('data-role', role);
-
-  if (role === 'assistant' && content === '') {
-    // Typing indicator
-    bubble.innerHTML = '<div class="flex gap-1"><span class="typing-dot w-2 h-2 bg-slate-400 rounded-full inline-block"></span><span class="typing-dot w-2 h-2 bg-slate-400 rounded-full inline-block"></span><span class="typing-dot w-2 h-2 bg-slate-400 rounded-full inline-block"></span></div>';
-  } else {
-    bubble.textContent = content;
-  }
-
-  wrapper.appendChild(bubble);
-  container.appendChild(wrapper);
-  container.scrollTop = container.scrollHeight;
+// ── Chat Messages ────────────────────────────────────────────────────────────
+function appendMsg(role,content){
+  const es=$('#empty-state');if(es)es.remove();
+  const c=$('#chat-messages'), w=document.createElement('div');
+  w.className=`flex ${role==='user'?'justify-end':'justify-start'} mb-2.5 group`;
+  const b=document.createElement('div');
+  b.className=role==='user'?'msg-user text-white px-3.5 py-2 rounded-2xl rounded-br-sm max-w-[70%] text-sm leading-relaxed':'bg-slate-100 dark:bg-[#111] border border-slate-200 dark:border-slate-800 px-3.5 py-2 rounded-2xl rounded-bl-sm max-w-[70%] text-sm leading-relaxed';
+  b.setAttribute('data-role',role);
+  if(role==='assistant'&&content==='')b.innerHTML='<div class="flex gap-1"><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span></div>';
+  else b.innerHTML=role==='user'?escHtml(content):fmtMd(content);
+  // Copy button
+  if(content){const cp=document.createElement('button');cp.className='hidden group-hover:inline-block ml-1 text-[0.6rem] text-slate-400 hover:text-fig-500 align-top';cp.textContent='📋';cp.onclick=()=>{navigator.clipboard.writeText(content)};w.appendChild(b);w.appendChild(cp)}else w.appendChild(b);
+  c.appendChild(w);c.scrollTop=c.scrollHeight;
 }
-
-function updateLastAssistant(content) {
-  const bubbles = document.querySelectorAll('[data-role="assistant"]');
-  const last = bubbles[bubbles.length - 1];
-  if (last) {
-    last.innerHTML = formatMarkdown(content);
-    $('#chat-messages').scrollTop = $('#chat-messages').scrollHeight;
-  }
+function updateLast(content){const bs=document.querySelectorAll('[data-role="assistant"]');const l=bs[bs.length-1];if(l){l.innerHTML=fmtMd(content);$('#chat-messages').scrollTop=$('#chat-messages').scrollHeight}}
+function finishStream(content,stats){
+  updateLast(content+(stats?`<div class="text-[0.6rem] text-slate-500 dark:text-slate-600 mt-1 font-mono">${stats.words} words · ${stats.time_s}s</div>`:''));
+  streaming=false;toggleInput(true);history.push({role:'assistant',content});
 }
+function escHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function fmtMd(t){return t.replace(/```(\w*)\n([\s\S]*?)```/g,'<pre class="bg-slate-200 dark:bg-slate-900 rounded-lg p-2.5 my-1.5 overflow-x-auto text-[0.7rem] font-mono border border-slate-300 dark:border-slate-700"><code>$2</code></pre>').replace(/`([^`]+)`/g,'<code class="bg-slate-200 dark:bg-slate-900 px-1 py-0.5 rounded text-[0.7rem] font-mono">$1</code>').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>').replace(/\n/g,'<br>')}
+function toggleInput(on){$('#chat-input').disabled=!on;$('#send-btn').disabled=!on}
 
-function finishStreaming(content, stats) {
-  updateLastAssistant(content);
-  streaming = false;
-  toggleInput(true);
-  // Add stats badge
-  if (stats) {
-    const bubbles = document.querySelectorAll('[data-role="assistant"]');
-    const last = bubbles[bubbles.length - 1];
-    if (last) {
-      const badge = document.createElement('div');
-      badge.className = 'text-[0.6rem] text-slate-400 mt-1 font-mono';
-      badge.textContent = `${stats.words} words · ${stats.time_s}s`;
-      last.appendChild(badge);
-    }
-  }
-  // Update history
-  history.push({ role: 'assistant', content });
+// ── File attach ──────────────────────────────────────────────────────────────
+$('#file-input').addEventListener('change',e=>{Array.from(e.target.files).forEach(f=>{attachedFiles.push(f);$('#file-preview').classList.remove('hidden');const t=document.createElement('span');t.className='inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-100 dark:bg-slate-900 rounded text-[0.6rem] border border-slate-200 dark:border-slate-800';t.innerHTML=`📎 ${f.name} <button class="text-slate-400 hover:text-red-500" onclick="this.parentElement.remove()">✕</button>`;$('#file-preview').appendChild(t)});e.target.value=''});
+
+// ── Send ─────────────────────────────────────────────────────────────────────
+function sendMessage(){
+  const inp=$('#chat-input'),text=inp.value.trim();
+  if(!text&&!attachedFiles.length)return;if(streaming)return;
+  let display=text;if(attachedFiles.length)display+=(text?'\n':'')+attachedFiles.map(f=>'📎 '+f.name).join('\n');
+  appendMsg('user',display);history.push({role:'user',content:text});
+  inp.value='';inp.style.height='auto';attachedFiles=[];$('#file-preview').innerHTML='';$('#file-preview').classList.add('hidden');toggleInput(false);
+  if(!ws||ws.readyState!==WebSocket.OPEN){connectWS();setTimeout(()=>sendViaWS(text),500)}else sendViaWS(text);
 }
-
-function formatMarkdown(text) {
-  // Basic markdown: bold, italic, code blocks, inline code
-  return text
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-slate-200 dark:bg-slate-700 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono"><code>$2</code></pre>')
-    .replace(/`([^`]+)`/g, '<code class="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs font-mono">$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>');
+function sendViaWS(text){
+  if(!ws||ws.readyState!==WebSocket.OPEN){appendMsg('assistant','⚠️ Not connected. Load a model first.');toggleInput(true);return}
+  ws.send(JSON.stringify({message:text,history:history.slice(0,-1),system_prompt:$('#system-prompt').value,temperature:parseFloat($('#temperature').value),max_tokens:parseInt($('#max-tokens').value)}));
 }
+$('#send-btn').addEventListener('click',sendMessage);
+$('#chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
+$('#chat-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,112)+'px'});
 
-function toggleInput(enabled) {
-  $('#chat-input').disabled = !enabled;
-  $('#send-btn').disabled = !enabled;
-}
-
-// ── File Upload ──────────────────────────────────────────────────────────────
-$('#file-input').addEventListener('change', (e) => {
-  const files = Array.from(e.target.files);
-  files.forEach(f => {
-    attachedFiles.push(f);
-    const preview = $('#file-preview');
-    preview.classList.remove('hidden');
-    const tag = document.createElement('span');
-    tag.className = 'inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[0.65rem] text-slate-600 dark:text-slate-300';
-    tag.innerHTML = `📎 ${f.name} <button class="ml-1 text-slate-400 hover:text-red-500" onclick="this.parentElement.remove()">✕</button>`;
-    preview.appendChild(tag);
-  });
-  e.target.value = '';
+// ── Copy conversation ────────────────────────────────────────────────────────
+$('#copy-chat-btn').addEventListener('click',()=>{
+  const text=history.map(m=>`${m.role}: ${m.content}`).join('\n\n');
+  navigator.clipboard.writeText(text).then(()=>{$('#copy-chat-btn').innerHTML='✓';setTimeout(()=>{$('#copy-chat-btn').innerHTML='<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'},1500)});
 });
 
-// ── Send Message ─────────────────────────────────────────────────────────────
-function sendMessage() {
-  const input = $('#chat-input');
-  const text = input.value.trim();
-  if (!text && attachedFiles.length === 0) return;
-  if (streaming) return;
-
-  // Show user message
-  let displayText = text;
-  if (attachedFiles.length > 0) {
-    displayText += (text ? '\n' : '') + attachedFiles.map(f => `📎 ${f.name}`).join('\n');
-  }
-  appendMessage('user', displayText);
-  history.push({ role: 'user', content: text });
-
-  // Clear
-  input.value = '';
-  input.style.height = 'auto';
-  attachedFiles = [];
-  $('#file-preview').innerHTML = '';
-  $('#file-preview').classList.add('hidden');
-  toggleInput(false);
-
-  // Send via WS
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    connectWS();
-    setTimeout(() => sendViaWS(text), 500);
-  } else {
-    sendViaWS(text);
-  }
+// ── Terminal / Logs ──────────────────────────────────────────────────────────
+async function refreshLogs(){
+  const r=await fetch('/api/logs?n=100');const d=await r.json();
+  $('#terminal').innerHTML=d.logs.map(l=>`<div>${escHtml(l)}</div>`).join('');
+  if(autoScroll)$('#terminal').scrollTop=$('#terminal').scrollHeight;
 }
+$('#refresh-logs').addEventListener('click',refreshLogs);
+$('#auto-scroll').addEventListener('click',function(){autoScroll=!autoScroll;this.textContent=`Auto-scroll: ${autoScroll?'ON':'OFF'}`});
+setInterval(()=>{if(!$('#tab-terminal').classList.contains('hidden'))refreshLogs()},2000);
 
-function sendViaWS(text) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    appendMessage('assistant', '⚠️ Not connected. Load a model first.');
-    toggleInput(true);
-    return;
-  }
-  ws.send(JSON.stringify({
-    message: text,
-    history: history.slice(0, -1),
-    system_prompt: $('#system-prompt').value,
-    temperature: parseFloat($('#temperature').value),
-    max_tokens: parseInt($('#max-tokens').value),
-  }));
-}
+// ── Help btn ─────────────────────────────────────────────────────────────────
+$('#help-btn').addEventListener('click',()=>{$$('.tab-btn').forEach(b=>{b.classList.remove('active','text-fig-500')});$$('.tab-content').forEach(c=>c.classList.add('hidden'));$('[data-tab="docs"]').classList.add('active','text-fig-500');$('#tab-docs').classList.remove('hidden')});
 
-$('#send-btn').addEventListener('click', sendMessage);
-$('#chat-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
+// ── Connect WS if model already loaded ───────────────────────────────────────
+fetch('/api/model/status').then(r=>r.json()).then(d=>{if(d.loaded)connectWS()}).catch(()=>{});
 
-// Auto-resize textarea
-$('#chat-input').addEventListener('input', function() {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 128) + 'px';
-});
-
-// Connect WS on load if model already loaded
-fetch('/api/model/status').then(r => r.json()).then(data => {
-  if (data.loaded) connectWS();
-}).catch(() => {});
+// ── Ctrl+Shift+C shortcut ────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();$('#copy-chat-btn').click()}});
 </script>
 </body>
 </html>

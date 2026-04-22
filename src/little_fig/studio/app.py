@@ -2,7 +2,7 @@
 Little Fig Studio — Main UI (v0.4)
 Four tabs: Chat · Dataset Builder · Eval · Merge
 
-Fixed for Gradio 4.x+ (messages format, not tuples).
+Compatible with Gradio 6.x (messages format is the default).
 Uses Fig Engine for inference (no GGUF dependency).
 Supports any HuggingFace model ID.
 """
@@ -71,12 +71,12 @@ def get_current_model():
     return _loaded_model
 
 
-# ── Chat logic (Gradio 4.x messages format) ──────────────────────────────────
+# ── Chat logic (messages format) ──────────────────────────────────────────────
 
 def respond(message: str, history: list, model_name: str,
             max_tokens: int, temperature: float, system_prompt: str, hw: dict):
     """
-    Chat response generator. Compatible with Gradio 4.x ChatInterface.
+    Chat response generator. Compatible with Gradio 6.x ChatInterface.
 
     history: list of {"role": str, "content": str} dicts (messages format)
     """
@@ -141,7 +141,7 @@ def run_studio(hw: Optional[dict] = None):
         footer {{ display:none !important; }}
     """
 
-    with gr.Blocks(title="🍐 Little Fig", theme=theme, css=css) as demo:
+    with gr.Blocks(title="🍐 Little Fig") as demo:
 
         gr.HTML("""
         <div class="fig-header">
@@ -156,7 +156,6 @@ def run_studio(hw: Optional[dict] = None):
                 with gr.Column(scale=3):
                     chatbot = gr.Chatbot(
                         show_label=False,
-                        type="messages",  # Gradio 4.x messages format
                         placeholder=(
                             "Type any HuggingFace model ID in the sidebar, or pick a suggested one.\n\n"
                             "Model loads on first message. Small models (GPT-2, Qwen 0.5B) load fastest."
@@ -261,7 +260,7 @@ def run_studio(hw: Optional[dict] = None):
 
     print("🍐 Little Fig Studio → http://0.0.0.0:8888")
     demo.queue()
-    demo.launch(server_name="0.0.0.0", server_port=8888, show_error=True)
+    demo.launch(server_name="0.0.0.0", server_port=8888, show_error=True, theme=theme, css=css)
 
 
 def _model_hint(model_name: str) -> str:

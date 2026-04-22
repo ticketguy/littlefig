@@ -11,7 +11,7 @@ import gradio as gr
 import os
 import time
 import json
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Union
 
 
 # ── Suggested models (user can type any model ID) ────────────────────────────
@@ -71,15 +71,48 @@ def get_current_model():
     return _loaded_model
 
 
+# ── Gradio 6.x content helpers ────────────────────────────────────────────────
+
+def _extract_text(content) -> str:
+    """
+    Gradio 6.x stores message content as a list of content parts, e.g.:
+        [{"type": "text", "text": "hello"}]
+    Gradio 5.x used a plain string.  This helper normalises both to str.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and part.get("type") == "text":
+                parts.append(part.get("text", ""))
+        return " ".join(parts)
+    return str(content)
+
+
+def _normalise_history(history: list) -> list:
+    """Return history with every content field as a plain string."""
+    return [
+        {"role": msg["role"], "content": _extract_text(msg.get("content", ""))}
+        for msg in history
+    ]
+
+
 # ── Chat logic (messages format) ──────────────────────────────────────────────
 
-def respond(message: str, history: list, model_name: str,
+def respond(message: Union[str, list], history: list, model_name: str,
             max_tokens: int, temperature: float, system_prompt: str, hw: dict):
     """
     Chat response generator. Compatible with Gradio 6.x ChatInterface.
 
     history: list of {"role": str, "content": str} dicts (messages format)
     """
+    # Gradio 6.x may pass content as a list of parts — normalise to str
+    message = _extract_text(message)
+    history = _normalise_history(history)
+
     if not message.strip():
         yield ""
         return
@@ -206,7 +239,7 @@ def run_studio(hw: Optional[dict] = None):
                     yield history
                     return
 
-                user_msg = history[-1]["content"]
+                user_msg = _extract_text(history[-1]["content"])
                 # History for context = everything except the last user message
                 context = history[:-1]
 

@@ -2,400 +2,220 @@
 <html lang="en" class="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Little Fig</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍐</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script>
-tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','system-ui'],mono:['JetBrains Mono','monospace']},colors:{fig:{50:'#ecfdf5',100:'#d1fae5',200:'#a7f3d0',300:'#6ee7b7',400:'#34d399',500:'#10b981',600:'#059669',700:'#047857',800:'#065f46',900:'#064e3b',950:'#022c22'}}}}}
-</script>
-<script>(function(){let t=localStorage.getItem('fig-theme');if(!t)t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.className=t;})()</script>
+<script>tailwind.config={darkMode:'class',theme:{extend:{fontFamily:{sans:['Inter','system-ui'],mono:['JetBrains Mono','monospace']},colors:{fig:{400:'#34d399',500:'#10b981',600:'#059669',700:'#047857',900:'#064e3b',950:'#022c22'}}}}}</script>
+<script>(()=>{let t=localStorage.getItem('fig-theme');if(!t)t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.className=t})()</script>
 <style>
-body{font-family:'Inter',system-ui,sans-serif;margin:0}
-.scrollbar-thin::-webkit-scrollbar{width:5px}
-.scrollbar-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}
-.light .scrollbar-thin::-webkit-scrollbar-thumb{background:#cbd5e1}
-@keyframes pulse-dot{0%,80%,100%{opacity:.3}40%{opacity:1}}
-.typing-dot{animation:pulse-dot 1.4s infinite}
-.typing-dot:nth-child(2){animation-delay:.2s}
-.typing-dot:nth-child(3){animation-delay:.4s}
-.tab-btn{transition:all .15s}
-.tab-btn.active{color:#10b981;border-bottom:2px solid #10b981}
-.msg-user{background:linear-gradient(135deg,#059669,#10b981)}
-.sidebar-transition{transition:width .2s ease,opacity .2s ease}
-pre code{font-size:.8rem}
+*{box-sizing:border-box}body{font-family:'Inter',system-ui,sans-serif;margin:0}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#334155;border-radius:3px}.light ::-webkit-scrollbar-thumb{background:#cbd5e1}
+@keyframes dot{0%,80%,100%{opacity:.25}40%{opacity:1}}.dot{animation:dot 1.4s infinite}.dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}
+.msg-u{background:linear-gradient(135deg,#059669,#10b981)}.tab-a{color:#10b981!important;border-color:#10b981!important}
+pre{margin:.5rem 0;border-radius:.5rem;overflow-x:auto}
 </style>
 </head>
-<body class="bg-white dark:bg-black text-slate-900 dark:text-slate-100 h-screen flex overflow-hidden">
+<body class="bg-white dark:bg-[#09090b] text-slate-800 dark:text-slate-200 h-screen flex overflow-hidden">
 
 <!-- ═══ SIDEBAR ═══ -->
-<aside id="sidebar" class="sidebar-transition w-64 h-full flex flex-col border-r border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a] flex-shrink-0 overflow-hidden">
-  <div class="flex-1 overflow-y-auto scrollbar-thin">
-    <!-- Logo + collapse -->
-    <div class="px-4 pt-4 pb-2 flex items-center justify-between">
-      <div class="flex items-center gap-2.5">
-        <span class="text-2xl">🍐</span>
-        <div><h1 class="text-base font-extrabold text-fig-500 leading-tight">Little Fig</h1><p class="text-[0.6rem] text-slate-500">v0.5 · Fig Engine</p></div>
-      </div>
-      <button id="collapse-btn" class="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400" title="Collapse sidebar">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M11 19l-7-7 7-7M18 19l-7-7 7-7"/></svg>
-      </button>
-    </div>
-
-    <div class="px-3 space-y-3 text-sm">
-      <!-- Model -->
-      <div>
-        <label class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600">Model</label>
-        <input id="model-input" type="text" placeholder="HF ID or local path…" class="mt-1 w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-black focus:ring-1 focus:ring-fig-500 outline-none">
-        <div class="flex gap-1.5 mt-1.5">
-          <button id="load-btn" class="flex-1 px-2 py-1 text-[0.65rem] font-semibold rounded-md bg-fig-600 hover:bg-fig-700 text-white">Load</button>
-          <button id="browse-btn" class="px-2 py-1 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900" title="Browse local files">📁</button>
-          <button id="unload-btn" class="px-2 py-1 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900">Unload</button>
-        </div>
-        <div id="model-status" class="mt-1.5"></div>
-      </div>
-
-      <!-- Params -->
-      <details open class="group">
-        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">Parameters</summary>
-        <div class="mt-1.5 space-y-2">
-          <div><div class="flex justify-between text-[0.65rem] text-slate-500"><span>Temperature</span><span id="temp-v" class="font-mono">0.7</span></div><input id="temperature" type="range" min="0.01" max="2" step="0.05" value="0.7" class="w-full h-1 accent-fig-500"></div>
-          <div><div class="flex justify-between text-[0.65rem] text-slate-500"><span>Max tokens</span><span id="maxtok-v" class="font-mono">512</span></div><input id="max-tokens" type="range" min="64" max="4096" step="64" value="512" class="w-full h-1 accent-fig-500"></div>
-        </div>
-      </details>
-
-      <!-- System Prompt -->
-      <details class="group">
-        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">System Prompt</summary>
-        <textarea id="system-prompt" rows="3" class="mt-1.5 w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-black resize-none outline-none focus:ring-1 focus:ring-fig-500">You are a helpful, concise AI assistant.</textarea>
-      </details>
-
-      <!-- Hardware -->
-      <details open class="group">
-        <summary class="text-[0.6rem] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-600 cursor-pointer select-none">Hardware</summary>
-        <div id="hw-info" class="mt-1.5 space-y-0.5 text-[0.65rem] font-mono text-slate-500"></div>
-      </details>
-    </div>
+<aside id="sb" class="w-60 h-full flex flex-col border-r border-slate-200 dark:border-zinc-800/60 bg-slate-50/80 dark:bg-[#0c0c0e] shrink-0 transition-all duration-200">
+  <!-- Logo -->
+  <div class="px-4 pt-4 pb-3 flex items-center justify-between border-b border-slate-200 dark:border-zinc-800/60">
+    <div class="flex items-center gap-2"><span class="text-xl">🍐</span><div><span class="text-sm font-extrabold text-fig-500">Little Fig</span><span class="text-[0.55rem] text-zinc-500 ml-1.5">v0.5</span></div></div>
+    <button onclick="toggleSb()" class="p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15 19l-7-7 7-7"/></svg></button>
   </div>
 
-  <!-- Bottom -->
-  <div class="px-3 py-2 border-t border-slate-200 dark:border-slate-800 flex gap-1.5">
-    <button id="theme-btn" class="flex-1 px-2 py-1.5 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 flex items-center justify-center gap-1.5"><span id="theme-icon">☀️</span><span id="theme-label">Light</span></button>
-    <button id="help-btn" class="px-2 py-1.5 text-[0.65rem] font-semibold rounded-md border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900" title="Help & Docs">❓</button>
+  <!-- New Chat + History -->
+  <div class="px-3 pt-3 space-y-1.5">
+    <button onclick="newChat()" class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-fig-600 hover:bg-fig-700 text-white transition"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14m-7-7h14"/></svg>New Chat</button>
+    <div id="chat-list" class="space-y-0.5 max-h-36 overflow-y-auto"></div>
+  </div>
+
+  <!-- Model -->
+  <div class="px-3 pt-4 space-y-1.5">
+    <span class="text-[0.55rem] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">Model</span>
+    <input id="m-in" type="text" placeholder="HF ID or local path…" class="w-full px-2.5 py-1.5 text-xs rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#09090b] outline-none focus:ring-1 focus:ring-fig-500 transition">
+    <div class="flex gap-1.5">
+      <button id="load-btn" onclick="loadModel()" class="flex-1 px-2 py-1 text-[0.6rem] font-bold rounded-md bg-fig-600 hover:bg-fig-700 text-white transition">Load</button>
+      <button onclick="openBrowser()" class="px-2 py-1 text-[0.6rem] rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition" title="Browse">📁</button>
+      <button onclick="unloadModel()" class="px-2 py-1 text-[0.6rem] rounded-md border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition">Unload</button>
+    </div>
+    <div id="m-st"></div>
+  </div>
+
+  <!-- Params -->
+  <div class="px-3 pt-4 space-y-2 flex-1 overflow-y-auto">
+    <span class="text-[0.55rem] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-600">Parameters</span>
+    <div><div class="flex justify-between text-[0.6rem] text-zinc-500"><span>Temperature</span><span id="tv" class="font-mono">0.7</span></div><input id="temp" type="range" min="0.01" max="2" step="0.05" value="0.7" oninput="$('#tv').textContent=this.value" class="w-full h-1 accent-fig-500"></div>
+    <div><div class="flex justify-between text-[0.6rem] text-zinc-500"><span>Max tokens</span><span id="mtv" class="font-mono">512</span></div><input id="mtok" type="range" min="64" max="4096" step="64" value="512" oninput="$('#mtv').textContent=this.value" class="w-full h-1 accent-fig-500"></div>
+    <details><summary class="text-[0.55rem] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-600 cursor-pointer">System Prompt</summary><textarea id="sp" rows="2" class="mt-1 w-full px-2 py-1.5 text-[0.65rem] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-[#09090b] resize-none outline-none focus:ring-1 focus:ring-fig-500">You are a helpful, concise AI assistant.</textarea></details>
+  </div>
+
+  <!-- Footer: theme + hw -->
+  <div class="px-3 py-2 border-t border-zinc-200 dark:border-zinc-800/60 space-y-1.5">
+    <button onclick="toggleTheme()" class="w-full flex items-center justify-center gap-2 px-2 py-1.5 text-[0.6rem] font-semibold rounded-lg border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition">
+      <svg id="t-ico" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path stroke-linecap="round" d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      <span id="t-lbl">Light mode</span>
+    </button>
+    <div id="hw" class="text-[0.55rem] font-mono text-zinc-500 dark:text-zinc-600 leading-relaxed"></div>
   </div>
 </aside>
 
-<!-- Collapsed sidebar toggle -->
-<button id="expand-btn" class="hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500">
-  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M13 5l7 7-7 7M6 5l7 7-7 7"/></svg>
+<!-- Collapsed toggle -->
+<button id="sb-open" class="hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500" onclick="toggleSb()">
+  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
 </button>
 
 <!-- ═══ MAIN ═══ -->
-<main class="flex-1 flex flex-col h-full min-w-0">
+<main class="flex-1 flex flex-col min-w-0">
   <!-- Tabs -->
-  <nav class="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0a0a0a] px-4 flex-shrink-0">
-    <button class="tab-btn active px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="chat">💬 Chat</button>
-    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="training">🏋️ Training</button>
-    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="terminal">🖥️ Terminal</button>
-    <button class="tab-btn px-4 py-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 border-b-2 border-transparent" data-tab="docs">📖 Docs</button>
+  <nav class="flex items-center gap-0.5 px-3 border-b border-zinc-200 dark:border-zinc-800/60 bg-white dark:bg-[#09090b] shrink-0">
+    <button class="tab-a tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="chat">💬 Chat</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="train">🏋️ Training</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="term">🖥 Terminal</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="docs">📖 Docs</button>
   </nav>
 
-  <!-- Tab content -->
   <div class="flex-1 overflow-hidden relative">
-
-    <!-- ── CHAT TAB ── -->
-    <div id="tab-chat" class="tab-content absolute inset-0 flex flex-col">
-      <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-4 scrollbar-thin">
-        <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center select-none">
-          <p class="text-5xl mb-3 opacity-80">🍐</p>
-          <h2 class="text-lg font-bold text-fig-500">Little Fig</h2>
-          <p class="text-xs text-slate-400 dark:text-slate-600 mt-1.5 max-w-xs">Load a model from the sidebar, then start chatting. Supports text, images, and file attachments.</p>
-        </div>
+    <!-- CHAT -->
+    <div id="p-chat" class="pane absolute inset-0 flex flex-col">
+      <div id="msgs" class="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+        <div id="empty" class="h-full flex flex-col items-center justify-center opacity-60"><p class="text-4xl mb-2">🍐</p><p class="text-sm font-bold text-fig-500">Little Fig</p><p class="text-[0.7rem] text-zinc-400 mt-1 max-w-[260px] text-center">Load a model and start chatting. Supports text, files, and voice.</p></div>
       </div>
-      <div class="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0a0a0a] px-3 py-2">
-        <div class="max-w-3xl mx-auto flex items-end gap-2">
-          <label class="cursor-pointer p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-400" title="Attach files">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-            <input id="file-input" type="file" multiple accept="image/*,audio/*,.pdf,.txt,.py,.json,.csv" class="hidden">
-          </label>
-          <div class="flex-1"><div id="file-preview" class="hidden flex flex-wrap gap-1 mb-1"></div><textarea id="chat-input" rows="1" placeholder="Message…" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-black resize-none outline-none focus:ring-1 focus:ring-fig-500 max-h-28"></textarea></div>
-          <button id="send-btn" class="p-2 rounded-xl bg-fig-600 hover:bg-fig-700 text-white disabled:opacity-30" title="Send"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg></button>
-          <button id="copy-chat-btn" class="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-400" title="Copy conversation"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+      <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800/60 bg-white dark:bg-[#09090b] px-3 py-2">
+        <div class="max-w-3xl mx-auto flex items-end gap-1.5">
+          <label class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-400 cursor-pointer" title="Attach"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg><input id="f-in" type="file" multiple accept="image/*,audio/*,.pdf,.txt,.py,.json,.csv" class="hidden" onchange="handleFiles(this)"></label>
+          <button onclick="startVoice()" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-400" title="Voice input" id="mic-btn"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path stroke-linecap="round" d="M19 10v2a7 7 0 01-14 0v-2m7 9v4m-4 0h8"/></svg></button>
+          <div class="flex-1"><div id="f-prev" class="hidden flex flex-wrap gap-1 mb-1"></div><textarea id="c-in" rows="1" placeholder="Message…" class="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-[#111] resize-none outline-none focus:ring-1 focus:ring-fig-500 max-h-28 transition" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,112)+'px'"></textarea></div>
+          <button onclick="send()" id="send-btn" class="p-2 rounded-xl bg-fig-600 hover:bg-fig-700 text-white disabled:opacity-30 transition" title="Send"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          <button onclick="copyChat()" class="p-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-400" title="Copy all"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
         </div>
       </div>
     </div>
 
-    <!-- ── TRAINING TAB ── -->
-    <div id="tab-training" class="tab-content absolute inset-0 hidden overflow-y-auto p-6 scrollbar-thin">
-      <div class="max-w-4xl mx-auto space-y-6">
-        <div><h2 class="text-lg font-bold text-fig-500">🏋️ Training Ground</h2><p class="text-xs text-slate-500 mt-1">Fine-tune models with Fig Engine. Four training tiers auto-selected based on your RAM.</p></div>
-        <div class="grid grid-cols-2 gap-4">
-          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
-            <h3 class="text-sm font-bold text-fig-500">Tier 1: Streaming LoRA</h3>
-            <p class="text-[0.7rem] text-slate-500 mt-1">INT4 base + FP32 LoRA adapters. ~400MB for 1.1B. Fast.</p>
-          </div>
-          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
-            <h3 class="text-sm font-bold text-fig-500">Tier 2: LISA</h3>
-            <p class="text-[0.7rem] text-slate-500 mt-1">Rotating layer unfreezing. 10-35% better than LoRA.</p>
-          </div>
-          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
-            <h3 class="text-sm font-bold text-fig-500">Tier 3: MeZO</h3>
-            <p class="text-[0.7rem] text-slate-500 mt-1">Zero-order optimization. No backward pass needed.</p>
-          </div>
-          <div class="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0a0a0a]">
-            <h3 class="text-sm font-bold text-fig-500">Tier 4: LOMO</h3>
-            <p class="text-[0.7rem] text-slate-500 mt-1">Fused gradient + update. Full fine-tune quality.</p>
-          </div>
+    <!-- TRAINING -->
+    <div id="p-train" class="pane absolute inset-0 hidden overflow-y-auto p-6">
+      <div class="max-w-4xl mx-auto space-y-5">
+        <div><h2 class="text-base font-bold text-fig-500">🏋️ Training Ground</h2><p class="text-xs text-zinc-500 mt-0.5">Fine-tune models with Fig Engine's four training tiers.</p></div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30"><div class="flex items-center gap-2 text-sm font-bold text-fig-500"><span class="w-5 h-5 rounded bg-fig-600 text-white text-[0.6rem] flex items-center justify-center font-bold">1</span>Streaming LoRA</div><p class="text-[0.65rem] text-zinc-500 mt-1">INT4 base + FP32 LoRA adapters. ~400MB for 1.1B params. Best speed.</p></div>
+          <div class="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30"><div class="flex items-center gap-2 text-sm font-bold text-fig-500"><span class="w-5 h-5 rounded bg-fig-600 text-white text-[0.6rem] flex items-center justify-center font-bold">2</span>LISA</div><p class="text-[0.65rem] text-zinc-500 mt-1">Rotating layer unfreezing. 10-35% better quality than LoRA.</p></div>
+          <div class="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30"><div class="flex items-center gap-2 text-sm font-bold text-fig-500"><span class="w-5 h-5 rounded bg-fig-600 text-white text-[0.6rem] flex items-center justify-center font-bold">3</span>MeZO</div><p class="text-[0.65rem] text-zinc-500 mt-1">Zeroth-order optimization. No backward pass. ~600MB for 1.1B.</p></div>
+          <div class="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/30"><div class="flex items-center gap-2 text-sm font-bold text-fig-500"><span class="w-5 h-5 rounded bg-fig-600 text-white text-[0.6rem] flex items-center justify-center font-bold">4</span>LOMO</div><p class="text-[0.65rem] text-zinc-500 mt-1">Fused backward + param update. O(1) gradient memory.</p></div>
         </div>
-        <div class="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">
-          🚧 Training UI coming soon — use the Python API for now:<br>
-          <code class="text-fig-500 font-mono">from little_fig.engine import FigTrainer</code>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="p-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-center"><p class="text-lg">🧪</p><p class="text-[0.65rem] font-bold text-zinc-400">FigSpace Arena</p><p class="text-[0.55rem] text-zinc-500">v0.6</p></div>
+          <div class="p-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-center"><p class="text-lg">🎯</p><p class="text-[0.65rem] font-bold text-zinc-400">RL Ground</p><p class="text-[0.55rem] text-zinc-500">v0.6</p></div>
+          <div class="p-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-center"><p class="text-lg">🔥</p><p class="text-[0.65rem] font-bold text-zinc-400">Ember Memory</p><p class="text-[0.55rem] text-zinc-500">v0.6</p></div>
         </div>
-        <div class="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-400">
-          🧠 <b>FigSpace</b> (model arena), <b>RL Ground</b>, <b>Checkpoints</b>, <b>Benchmarks</b> — coming in v0.6
-        </div>
+        <div class="p-3 rounded-xl bg-fig-950/50 border border-fig-900/30"><p class="text-xs text-fig-400 font-mono">from little_fig.engine import FigTrainer, FigTrainingConfig<br>trainer = FigTrainer(model, FigTrainingConfig(num_epochs=3))<br>trainer.load_dataset("tatsu-lab/alpaca")<br>trainer.train()</p></div>
       </div>
     </div>
 
-    <!-- ── TERMINAL TAB ── -->
-    <div id="tab-terminal" class="tab-content absolute inset-0 hidden flex flex-col">
-      <div id="terminal" class="flex-1 overflow-y-auto p-4 font-mono text-xs bg-black text-green-400 scrollbar-thin"></div>
-      <div class="border-t border-slate-800 bg-[#0a0a0a] px-4 py-2 flex gap-2">
-        <button id="refresh-logs" class="px-3 py-1 text-[0.65rem] font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-300">Refresh</button>
-        <button id="auto-scroll" class="px-3 py-1 text-[0.65rem] font-semibold rounded bg-slate-800 hover:bg-slate-700 text-slate-300">Auto-scroll: ON</button>
+    <!-- TERMINAL -->
+    <div id="p-term" class="pane absolute inset-0 hidden flex flex-col bg-[#09090b]">
+      <div id="term" class="flex-1 overflow-y-auto p-3 font-mono text-xs text-green-400 space-y-0.5"></div>
+      <div class="shrink-0 border-t border-zinc-800 px-3 py-2 flex gap-2">
+        <span class="text-green-500 font-mono text-xs self-center">$</span>
+        <input id="term-in" type="text" placeholder="Type a command…" class="flex-1 px-2 py-1 text-xs font-mono rounded bg-zinc-900 border border-zinc-800 text-green-400 outline-none focus:ring-1 focus:ring-green-500" onkeydown="if(event.key==='Enter')runCmd()">
+        <button onclick="runCmd()" class="px-3 py-1 text-[0.6rem] font-bold rounded bg-green-900 hover:bg-green-800 text-green-300">Run</button>
       </div>
     </div>
 
-    <!-- ── DOCS TAB ── -->
-    <div id="tab-docs" class="tab-content absolute inset-0 hidden overflow-y-auto p-6 scrollbar-thin">
-      <div class="max-w-3xl mx-auto prose prose-sm dark:prose-invert prose-headings:text-fig-500">
-        <h1>📖 Little Fig Documentation</h1>
-        <h2>Quick Start</h2>
-        <ol>
-          <li><b>Load a model</b> — Type a HuggingFace model ID (e.g. <code>Qwen/Qwen2.5-0.5B-Instruct</code>) or a local path to a <code>.gguf</code> file in the sidebar, then click <b>Load</b>.</li>
-          <li><b>Chat</b> — Type a message and press Enter. Responses stream in real-time via WebSocket.</li>
-          <li><b>Attach files</b> — Click the 📎 icon to attach images, PDFs, code files, or audio.</li>
-        </ol>
-        <h2>Model Loading</h2>
-        <p>Little Fig's universal GGUF loader auto-detects any architecture. It tries:</p>
-        <ol>
-          <li><b>transformers built-in</b> (22+ architectures)</li>
-          <li><b>gguf-py TensorNameMap</b> fallback (122+ architectures)</li>
-          <li>Auto-upgrades transformers if architecture is too new</li>
-        </ol>
-        <p>You can also use the <b>📁 Browse</b> button to navigate your local filesystem.</p>
-        <h2>Fig Engine</h2>
-        <p>The core engine uses INT4 streaming quantization (7.4× compression) with adaptive codebook fitting (FigQuant) and torch.compile fused operations (FigKernel).</p>
-        <table>
-          <tr><th>Component</th><th>What it does</th></tr>
-          <tr><td><b>FigQuant</b></td><td>Adaptive codebook INT4 — 9.7% less error than standard INT4</td></tr>
-          <tr><td><b>FigKernel</b></td><td>Fused ops via torch.compile — 2.95× faster RMSNorm</td></tr>
-          <tr><td><b>FigPipeline</b></td><td>Async GPU-CPU training — optimizer states on CPU</td></tr>
-          <tr><td><b>FigLinear</b></td><td>INT4 base + LoRA adapters, fast/low-RAM modes</td></tr>
-        </table>
-        <h2>Training (Python API)</h2>
-        <pre><code>from little_fig.engine import FigModel, FigTrainer, FigTrainingConfig
-
-model = FigModel.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0", lora_r=16)
-config = FigTrainingConfig(num_epochs=3, learning_rate=2e-4)
-trainer = FigTrainer(model, config)
-trainer.load_dataset("tatsu-lab/alpaca")
-trainer.train()</code></pre>
-        <h2>Keyboard Shortcuts</h2>
-        <table>
-          <tr><td><kbd>Enter</kbd></td><td>Send message</td></tr>
-          <tr><td><kbd>Shift+Enter</kbd></td><td>New line</td></tr>
-          <tr><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy conversation</td></tr>
-        </table>
-        <h2>Troubleshooting</h2>
-        <p><b>Model fails to load?</b> Run <code>pip install --upgrade transformers gguf</code> and restart.</p>
-        <p><b>Out of memory?</b> Use a smaller model (GPT-2, Qwen 0.5B) or free up RAM.</p>
-        <p><b>Gemma 4 not loading?</b> Your transformers version needs updating: <code>pip install git+https://github.com/huggingface/transformers.git</code></p>
+    <!-- DOCS -->
+    <div id="p-docs" class="pane absolute inset-0 hidden overflow-y-auto">
+      <div class="max-w-3xl mx-auto py-8 px-6">
+        <h1 class="text-2xl font-extrabold text-fig-500 mb-1">📖 Little Fig Docs</h1>
+        <p class="text-sm text-zinc-500 mb-6">Everything you need to get started.</p>
+        <div class="space-y-6 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          <section><h2 class="text-base font-bold text-zinc-800 dark:text-zinc-200 mb-2 flex items-center gap-2">🚀 Quick Start</h2><ol class="list-decimal ml-5 space-y-1"><li>Enter a model ID in the sidebar (e.g. <code class="text-fig-500 bg-zinc-100 dark:bg-zinc-900 px-1 rounded text-xs">Qwen/Qwen2.5-0.5B-Instruct</code>) or browse for a local <code class="text-fig-500 bg-zinc-100 dark:bg-zinc-900 px-1 rounded text-xs">.gguf</code> file</li><li>Click <b>Load</b> and wait for the green status pill</li><li>Type a message and press Enter — responses stream in real-time</li><li>Attach files (📎), use voice input (🎤), or paste images</li></ol></section>
+          <section><h2 class="text-base font-bold text-zinc-800 dark:text-zinc-200 mb-2 flex items-center gap-2">🔧 Fig Engine Components</h2><div class="grid grid-cols-1 sm:grid-cols-2 gap-2"><div class="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800"><b class="text-fig-500 text-xs">FigQuant</b><p class="text-[0.7rem] mt-0.5">Adaptive codebook INT4. NF4 base refined via weighted k-means. 9.7% less error than standard INT4.</p></div><div class="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800"><b class="text-fig-500 text-xs">FigKernel</b><p class="text-[0.7rem] mt-0.5">torch.compile fused ops. RMSNorm 2.95× faster. Works on CPU (AVX-512) and GPU (CUDA).</p></div><div class="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800"><b class="text-fig-500 text-xs">FigPipeline</b><p class="text-[0.7rem] mt-0.5">Async GPU-CPU training. Optimizer states on CPU. Train models larger than VRAM.</p></div><div class="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800"><b class="text-fig-500 text-xs">Universal GGUF</b><p class="text-[0.7rem] mt-0.5">Auto-detects any architecture. 22+ via transformers, 122+ via gguf-py fallback.</p></div></div></section>
+          <section><h2 class="text-base font-bold text-zinc-800 dark:text-zinc-200 mb-2 flex items-center gap-2">⌨️ Shortcuts</h2><div class="grid grid-cols-2 gap-1 text-xs"><span class="font-mono bg-zinc-100 dark:bg-zinc-900 px-2 py-1 rounded">Enter</span><span class="self-center">Send message</span><span class="font-mono bg-zinc-100 dark:bg-zinc-900 px-2 py-1 rounded">Shift+Enter</span><span class="self-center">New line</span><span class="font-mono bg-zinc-100 dark:bg-zinc-900 px-2 py-1 rounded">Ctrl+Shift+C</span><span class="self-center">Copy conversation</span></div></section>
+          <section><h2 class="text-base font-bold text-zinc-800 dark:text-zinc-200 mb-2 flex items-center gap-2">🔥 Ember's Diaries</h2><p>Memory persistence powered by <a href="https://github.com/ticketguy/embers-diaries" class="text-fig-500 underline">Ember's Diaries</a> — a cognitive database that never deletes. Chat history is preserved with full versioning, annotations, and episodic segmentation. Coming in v0.6.</p></section>
+          <section><h2 class="text-base font-bold text-zinc-800 dark:text-zinc-200 mb-2">🐛 Troubleshooting</h2><ul class="list-disc ml-5 space-y-1 text-xs"><li><b>Model won't load?</b> <code class="text-fig-500">pip install --upgrade transformers gguf</code></li><li><b>Out of memory?</b> Use GPT-2 or Qwen 0.5B. Free RAM before loading.</li><li><b>Gemma 4?</b> <code class="text-fig-500">pip install git+https://github.com/huggingface/transformers.git</code></li></ul></section>
+        </div>
       </div>
     </div>
   </div>
 </main>
 
-<!-- ═══ FILE BROWSER MODAL ═══ -->
-<div id="file-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-  <div class="w-[500px] max-h-[70vh] bg-white dark:bg-[#111] rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col">
-    <div class="flex items-center justify-between px-4 py-2 border-b border-slate-200 dark:border-slate-800">
-      <span class="text-sm font-bold">📁 Browse Local Models</span>
-      <button id="close-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">&times;</button>
-    </div>
-    <div id="file-path-bar" class="px-4 py-1.5 text-[0.65rem] font-mono text-slate-500 bg-slate-50 dark:bg-black border-b border-slate-200 dark:border-slate-800 truncate"></div>
-    <div id="file-list" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+<!-- FILE BROWSER MODAL -->
+<div id="fb" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="w-[480px] max-h-[65vh] bg-white dark:bg-[#111] rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden flex flex-col shadow-2xl">
+    <div class="flex items-center justify-between px-4 py-2 border-b border-zinc-200 dark:border-zinc-800"><span class="text-xs font-bold">📁 Browse Models</span><button onclick="$('#fb').classList.add('hidden')" class="text-zinc-400 hover:text-zinc-200 text-base">&times;</button></div>
+    <div id="fb-path" class="px-3 py-1 text-[0.6rem] font-mono text-zinc-500 bg-zinc-50 dark:bg-[#09090b] border-b border-zinc-200 dark:border-zinc-800 truncate"></div>
+    <div id="fb-list" class="flex-1 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-900"></div>
   </div>
 </div>
 
 <script>
-const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
-let ws=null, history=[], streaming=false, attachedFiles=[], autoScroll=true;
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+let ws=null,hist=[],streaming=false,files=[],chatId=null,termWs=null,mediaRec=null;
 
-// ── Tabs ─────────────────────────────────────────────────────────────────────
-$$('.tab-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    $$('.tab-btn').forEach(b=>{b.classList.remove('active');b.classList.remove('text-fig-500')});
-    btn.classList.add('active');btn.classList.add('text-fig-500');
-    $$('.tab-content').forEach(c=>c.classList.add('hidden'));
-    $(`#tab-${btn.dataset.tab}`).classList.remove('hidden');
-  });
-});
+// Tabs
+$$('.tab').forEach(b=>b.onclick=()=>{$$('.tab').forEach(t=>{t.classList.remove('tab-a')});b.classList.add('tab-a');$$('.pane').forEach(p=>p.classList.add('hidden'));$(`#p-${b.dataset.t}`).classList.remove('hidden');if(b.dataset.t==='term')connectTerm()});
 
-// ── Sidebar collapse ─────────────────────────────────────────────────────────
-$('#collapse-btn').addEventListener('click',()=>{$('#sidebar').classList.add('hidden');$('#expand-btn').classList.remove('hidden')});
-$('#expand-btn').addEventListener('click',()=>{$('#sidebar').classList.remove('hidden');$('#expand-btn').classList.add('hidden')});
+// Sidebar
+function toggleSb(){const s=$('#sb'),o=$('#sb-open');if(s.classList.contains('hidden')){s.classList.remove('hidden');o.classList.add('hidden')}else{s.classList.add('hidden');o.classList.remove('hidden')}}
 
-// ── Theme ────────────────────────────────────────────────────────────────────
-$('#theme-btn').addEventListener('click',()=>{
-  const d=document.documentElement, isDark=d.classList.contains('dark');
-  d.className=isDark?'light':'dark';
-  localStorage.setItem('fig-theme',isDark?'light':'dark');
-  $('#theme-icon').textContent=isDark?'🌙':'☀️';
-  $('#theme-label').textContent=isDark?'Dark':'Light';
-});
-if(document.documentElement.classList.contains('light')){$('#theme-icon').textContent='🌙';$('#theme-label').textContent='Dark'}
+// Theme
+function toggleTheme(){const d=document.documentElement,dark=d.classList.contains('dark');d.className=dark?'light':'dark';localStorage.setItem('fig-theme',dark?'light':'dark');$('#t-lbl').textContent=dark?'Dark mode':'Light mode'}
+if(document.documentElement.classList.contains('light'))$('#t-lbl').textContent='Dark mode';
 
-// ── Sliders ──────────────────────────────────────────────────────────────────
-$('#temperature').oninput=e=>$('#temp-v').textContent=e.target.value;
-$('#max-tokens').oninput=e=>$('#maxtok-v').textContent=e.target.value;
+// HW
+fetch('/api/health').then(r=>r.json()).then(d=>{const h=d.hardware;$('#hw').innerHTML=`${h.gpu?'⚡ '+h.gpu:'💻 CPU '+h.cpu_cores+' cores'}<br>RAM ${h.ram_available_gb}/${h.ram_total_gb}GB (${h.ram_used_pct}%) · Disk ${h.disk_free_gb}GB free`;if(d.model_loaded){mStatus('ready',d.model_loaded.split('/').pop());$('#m-in').value=d.model_loaded}}).catch(()=>$('#hw').textContent='Server unreachable');
 
-// ── Hardware ─────────────────────────────────────────────────────────────────
-fetch('/api/health').then(r=>r.json()).then(d=>{
-  const h=d.hardware, p=d.platform;
-  let html='';
-  html+=`<div class="text-fig-500">${h.gpu?'⚡ '+h.gpu:'💻 '+h.cpu_name}</div>`;
-  html+=`<div>Cores: ${h.cpu_cores} · RAM: ${h.ram_available_gb}/${h.ram_total_gb} GB (${h.ram_used_pct}%)</div>`;
-  html+=`<div>Disk: ${h.disk_free_gb} GB free</div>`;
-  html+=`<div>PyTorch: ${h.torch_version} · Python: ${p.python}</div>`;
-  html+=`<div>${p.os} ${p.arch}</div>`;
-  $('#hw-info').innerHTML=html;
-  if(d.model_loaded){showStatus('ready',d.model_loaded.split('/').pop());$('#model-input').value=d.model_loaded}
-}).catch(()=>{$('#hw-info').innerHTML='<div class="text-red-400">Server unreachable</div>'});
+// Status
+function mStatus(t,s){const c={ready:'bg-fig-950 text-fig-400',empty:'bg-amber-950 text-amber-400',error:'bg-red-950 text-red-400',loading:'bg-blue-950 text-blue-400'};const lc={ready:'bg-fig-100 text-fig-700',empty:'bg-amber-100 text-amber-700',error:'bg-red-100 text-red-700',loading:'bg-blue-100 text-blue-700'};const i={ready:'✓',empty:'○',error:'✗',loading:'⟳'};const dk=document.documentElement.classList.contains('dark');$('#m-st').innerHTML=`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[0.55rem] font-bold ${dk?c[t]:lc[t]}">${i[t]} ${s}</span>`}
 
-// ── Status ───────────────────────────────────────────────────────────────────
-function showStatus(t,txt){
-  const c={ready:'bg-fig-950 text-fig-400 border-fig-800',empty:'bg-amber-950 text-amber-400 border-amber-800',error:'bg-red-950 text-red-400 border-red-800',loading:'bg-blue-950 text-blue-400 border-blue-800'};
-  const cl={ready:'bg-fig-100 text-fig-700 border-fig-200',empty:'bg-amber-100 text-amber-700 border-amber-200',error:'bg-red-100 text-red-700 border-red-200',loading:'bg-blue-100 text-blue-700 border-blue-200'};
-  const isDark=document.documentElement.classList.contains('dark');
-  const colors=isDark?c:cl;
-  const icons={ready:'✓',empty:'○',error:'✗',loading:'⟳'};
-  $('#model-status').innerHTML=`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[0.6rem] font-semibold border ${colors[t]}">${icons[t]} ${txt}</span>`;
-}
+// Model
+async function loadModel(){const id=$('#m-in').value.trim();if(!id)return mStatus('empty','Enter model ID');mStatus('loading','Loading…');$('#load-btn').disabled=true;try{const r=await fetch('/api/model/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:id})});const d=await r.json();if(r.ok){mStatus('ready',id.split('/').pop());connectWS()}else mStatus('error',(d.detail||'Failed').substring(0,40))}catch(e){mStatus('error',e.message.substring(0,40))}$('#load-btn').disabled=false}
+async function unloadModel(){await fetch('/api/model/unload',{method:'POST'});mStatus('empty','No model');if(ws)ws.close()}
 
-// ── Model Load ───────────────────────────────────────────────────────────────
-$('#load-btn').addEventListener('click',async()=>{
-  const id=$('#model-input').value.trim();
-  if(!id)return showStatus('empty','Enter a model ID');
-  showStatus('loading','Loading…');$('#load-btn').disabled=true;
-  try{const r=await fetch('/api/model/load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model_id:id})});const d=await r.json();
-  if(r.ok){showStatus('ready',id.split('/').pop());connectWS()}else showStatus('error',(d.detail||'Failed').substring(0,50))}
-  catch(e){showStatus('error',e.message.substring(0,50))}
-  $('#load-btn').disabled=false;
-});
-$('#unload-btn').addEventListener('click',async()=>{await fetch('/api/model/unload',{method:'POST'});showStatus('empty','No model');if(ws)ws.close()});
+// File browser
+function openBrowser(){$('#fb').classList.remove('hidden');browse('.')}
+async function browse(p){const r=await fetch(`/api/files/browse?path=${encodeURIComponent(p)}`);const d=await r.json();$('#fb-path').textContent=d.current;let h='';if(d.current!==d.parent)h+=`<div class="px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer text-xs flex items-center gap-2" onclick="browse('${d.parent.replace(/\\/g,'\\\\')}')">📁 ..</div>`;d.entries.forEach(e=>{if(e.is_dir)h+=`<div class="px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer text-xs" onclick="browse('${e.path.replace(/\\/g,'\\\\')}')">📁 ${e.name}</div>`;else h+=`<div class="px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-900 cursor-pointer text-xs flex justify-between" onclick="$('#m-in').value='${e.path.replace(/\\/g,'\\\\')}';$('#fb').classList.add('hidden')"><span>📄 ${e.name}</span><span class="text-zinc-500 font-mono">${e.size_human}</span></div>`});$('#fb-list').innerHTML=h||'<div class="p-4 text-xs text-zinc-500 text-center">No model files</div>'}
 
-// ── File Browser ─────────────────────────────────────────────────────────────
-$('#browse-btn').addEventListener('click',()=>{$('#file-modal').classList.remove('hidden');browseDir('.')});
-$('#close-modal').addEventListener('click',()=>$('#file-modal').classList.add('hidden'));
-$('#file-modal').addEventListener('click',e=>{if(e.target.id==='file-modal')$('#file-modal').classList.add('hidden')});
-async function browseDir(p){
-  const r=await fetch(`/api/files/browse?path=${encodeURIComponent(p)}`);const d=await r.json();
-  $('#file-path-bar').textContent=d.current;
-  let html='';
-  if(d.current!==d.parent)html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center gap-2" data-dir="${d.parent}">📁 <span class="text-slate-400">..</span></div>`;
-  d.entries.forEach(e=>{
-    if(e.is_dir)html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center gap-2" data-dir="${e.path}">📁 ${e.name}</div>`;
-    else html+=`<div class="px-4 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer text-xs flex items-center justify-between" data-file="${e.path}"><span>📄 ${e.name}</span><span class="text-slate-400 font-mono">${e.size_human}</span></div>`;
-  });
-  if(!d.entries.length)html='<div class="px-4 py-4 text-xs text-slate-400 text-center">No model files found here</div>';
-  $('#file-list').innerHTML=html;
-  $('#file-list').querySelectorAll('[data-dir]').forEach(el=>el.addEventListener('click',()=>browseDir(el.dataset.dir)));
-  $('#file-list').querySelectorAll('[data-file]').forEach(el=>el.addEventListener('click',()=>{$('#model-input').value=el.dataset.file;$('#file-modal').classList.add('hidden')}));
-}
+// Chat history
+async function loadChats(){const r=await fetch('/api/chats');const d=await r.json();$('#chat-list').innerHTML=d.chats.map(c=>`<button class="w-full text-left px-2 py-1 text-[0.6rem] rounded hover:bg-zinc-200 dark:hover:bg-zinc-800 truncate ${c.id===chatId?'bg-zinc-200 dark:bg-zinc-800 text-fig-500':'text-zinc-500'}" onclick="openChat('${c.id}')">${c.title} <span class="text-zinc-400">(${c.message_count})</span></button>`).join('')}
+async function newChat(){const r=await fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'New Chat'})});const d=await r.json();chatId=d.id;hist=[];$('#msgs').innerHTML='<div id="empty" class="h-full flex flex-col items-center justify-center opacity-60"><p class="text-4xl mb-2">🍐</p><p class="text-sm font-bold text-fig-500">Little Fig</p></div>';loadChats()}
+async function openChat(id){chatId=id;const r=await fetch(`/api/chats/${id}`);const d=await r.json();hist=d.messages||[];$('#msgs').innerHTML='';hist.forEach(m=>addMsg(m.role,m.content));loadChats()}
+async function saveChat(){if(!chatId)return;const first=hist.find(m=>m.role==='user');const title=first?first.content.substring(0,30):'New Chat';await fetch(`/api/chats/${chatId}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,messages:hist,model_id:$('#m-in').value})})}
+loadChats();
 
-// ── WebSocket ────────────────────────────────────────────────────────────────
-function connectWS(){
-  if(ws&&ws.readyState===WebSocket.OPEN)return;
-  const proto=location.protocol==='https:'?'wss':'ws';
-  ws=new WebSocket(`${proto}://${location.host}/api/chat`);
-  ws.onmessage=e=>{const d=JSON.parse(e.data);
-    if(d.type==='start'){appendMsg('assistant','');streaming=true}
-    else if(d.type==='chunk')updateLast(d.content);
-    else if(d.type==='done'){finishStream(d.content,d.stats)}
-    else if(d.type==='error'){appendMsg('assistant','❌ '+d.content);streaming=false;toggleInput(true)}
-  };
-  ws.onclose=()=>{ws=null};
-}
+// WS
+function connectWS(){if(ws&&ws.readyState===WebSocket.OPEN)return;const p=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${p}://${location.host}/api/chat`);ws.onmessage=e=>{const d=JSON.parse(e.data);if(d.type==='start'){addMsg('assistant','');streaming=true}else if(d.type==='chunk')updLast(d.content);else if(d.type==='done'){updLast(d.content+(d.stats?`<div class="mt-1 text-[0.55rem] font-mono text-zinc-500">${d.stats.words}w · ${d.stats.time_s}s · ${d.stats.tok_per_s} tok/s</div>`:''));streaming=false;toggleIn(true);hist.push({role:'assistant',content:d.content});saveChat()}else if(d.type==='error'){addMsg('assistant','❌ '+d.content);streaming=false;toggleIn(true)}};ws.onclose=()=>ws=null}
 
-// ── Chat Messages ────────────────────────────────────────────────────────────
-function appendMsg(role,content){
-  const es=$('#empty-state');if(es)es.remove();
-  const c=$('#chat-messages'), w=document.createElement('div');
-  w.className=`flex ${role==='user'?'justify-end':'justify-start'} mb-2.5 group`;
-  const b=document.createElement('div');
-  b.className=role==='user'?'msg-user text-white px-3.5 py-2 rounded-2xl rounded-br-sm max-w-[70%] text-sm leading-relaxed':'bg-slate-100 dark:bg-[#111] border border-slate-200 dark:border-slate-800 px-3.5 py-2 rounded-2xl rounded-bl-sm max-w-[70%] text-sm leading-relaxed';
-  b.setAttribute('data-role',role);
-  if(role==='assistant'&&content==='')b.innerHTML='<div class="flex gap-1"><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="typing-dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span></div>';
-  else b.innerHTML=role==='user'?escHtml(content):fmtMd(content);
-  // Copy button
-  if(content){const cp=document.createElement('button');cp.className='hidden group-hover:inline-block ml-1 text-[0.6rem] text-slate-400 hover:text-fig-500 align-top';cp.textContent='📋';cp.onclick=()=>{navigator.clipboard.writeText(content)};w.appendChild(b);w.appendChild(cp)}else w.appendChild(b);
-  c.appendChild(w);c.scrollTop=c.scrollHeight;
-}
-function updateLast(content){const bs=document.querySelectorAll('[data-role="assistant"]');const l=bs[bs.length-1];if(l){l.innerHTML=fmtMd(content);$('#chat-messages').scrollTop=$('#chat-messages').scrollHeight}}
-function finishStream(content,stats){
-  updateLast(content+(stats?`<div class="text-[0.6rem] text-slate-500 dark:text-slate-600 mt-1 font-mono">${stats.words} words · ${stats.time_s}s</div>`:''));
-  streaming=false;toggleInput(true);history.push({role:'assistant',content});
-}
-function escHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
-function fmtMd(t){return t.replace(/```(\w*)\n([\s\S]*?)```/g,'<pre class="bg-slate-200 dark:bg-slate-900 rounded-lg p-2.5 my-1.5 overflow-x-auto text-[0.7rem] font-mono border border-slate-300 dark:border-slate-700"><code>$2</code></pre>').replace(/`([^`]+)`/g,'<code class="bg-slate-200 dark:bg-slate-900 px-1 py-0.5 rounded text-[0.7rem] font-mono">$1</code>').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\*(.+?)\*/g,'<em>$1</em>').replace(/\n/g,'<br>')}
-function toggleInput(on){$('#chat-input').disabled=!on;$('#send-btn').disabled=!on}
+// Messages
+function addMsg(r,c){$('#empty')?.remove();const w=document.createElement('div');w.className=`flex ${r==='user'?'justify-end':'justify-start'}`;const b=document.createElement('div');b.className=r==='user'?'msg-u text-white px-3 py-2 rounded-2xl rounded-br-sm max-w-[70%] text-sm':'bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-2 rounded-2xl rounded-bl-sm max-w-[70%] text-sm';b.setAttribute('data-r',r);if(r==='assistant'&&c==='')b.innerHTML='<span class="flex gap-1"><span class="dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span><span class="dot w-1.5 h-1.5 bg-fig-500 rounded-full inline-block"></span></span>';else b.innerHTML=r==='user'?esc(c):md(c);w.appendChild(b);$('#msgs').appendChild(w);$('#msgs').scrollTop=$('#msgs').scrollHeight}
+function updLast(c){const a=document.querySelectorAll('[data-r="assistant"]');const l=a[a.length-1];if(l){l.innerHTML=md(c);$('#msgs').scrollTop=$('#msgs').scrollHeight}}
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function md(t){return t.replace(/```(\w*)\n([\s\S]*?)```/g,'<pre class="bg-zinc-200 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-800 rounded-lg p-2 my-1 text-[0.7rem] font-mono overflow-x-auto"><code>$2</code></pre>').replace(/`([^`]+)`/g,'<code class="bg-zinc-200 dark:bg-zinc-900 px-1 py-0.5 rounded text-[0.7rem] font-mono">$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\*(.+?)\*/g,'<em>$1</em>').replace(/\n/g,'<br>')}
+function toggleIn(on){$('#c-in').disabled=!on;$('#send-btn').disabled=!on}
 
-// ── File attach ──────────────────────────────────────────────────────────────
-$('#file-input').addEventListener('change',e=>{Array.from(e.target.files).forEach(f=>{attachedFiles.push(f);$('#file-preview').classList.remove('hidden');const t=document.createElement('span');t.className='inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-100 dark:bg-slate-900 rounded text-[0.6rem] border border-slate-200 dark:border-slate-800';t.innerHTML=`📎 ${f.name} <button class="text-slate-400 hover:text-red-500" onclick="this.parentElement.remove()">✕</button>`;$('#file-preview').appendChild(t)});e.target.value=''});
+// Files
+function handleFiles(el){Array.from(el.files).forEach(f=>{files.push(f);$('#f-prev').classList.remove('hidden');const s=document.createElement('span');s.className='inline-flex items-center gap-1 px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-900 rounded text-[0.55rem] border border-zinc-200 dark:border-zinc-800';s.innerHTML=`📎 ${f.name} <button onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-red-500">✕</button>`;$('#f-prev').appendChild(s)});el.value=''}
 
-// ── Send ─────────────────────────────────────────────────────────────────────
-function sendMessage(){
-  const inp=$('#chat-input'),text=inp.value.trim();
-  if(!text&&!attachedFiles.length)return;if(streaming)return;
-  let display=text;if(attachedFiles.length)display+=(text?'\n':'')+attachedFiles.map(f=>'📎 '+f.name).join('\n');
-  appendMsg('user',display);history.push({role:'user',content:text});
-  inp.value='';inp.style.height='auto';attachedFiles=[];$('#file-preview').innerHTML='';$('#file-preview').classList.add('hidden');toggleInput(false);
-  if(!ws||ws.readyState!==WebSocket.OPEN){connectWS();setTimeout(()=>sendViaWS(text),500)}else sendViaWS(text);
-}
-function sendViaWS(text){
-  if(!ws||ws.readyState!==WebSocket.OPEN){appendMsg('assistant','⚠️ Not connected. Load a model first.');toggleInput(true);return}
-  ws.send(JSON.stringify({message:text,history:history.slice(0,-1),system_prompt:$('#system-prompt').value,temperature:parseFloat($('#temperature').value),max_tokens:parseInt($('#max-tokens').value)}));
-}
-$('#send-btn').addEventListener('click',sendMessage);
-$('#chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}});
-$('#chat-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,112)+'px'});
+// Voice
+function startVoice(){if(mediaRec&&mediaRec.state==='recording'){mediaRec.stop();$('#mic-btn').classList.remove('text-red-500');return}navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{mediaRec=new MediaRecorder(stream);const chunks=[];mediaRec.ondataavailable=e=>chunks.push(e.data);mediaRec.onstop=()=>{stream.getTracks().forEach(t=>t.stop());const blob=new Blob(chunks,{type:'audio/webm'});const f=new File([blob],'voice.webm',{type:'audio/webm'});files.push(f);$('#f-prev').classList.remove('hidden');const s=document.createElement('span');s.className='inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-100 dark:bg-red-900/30 rounded text-[0.55rem] border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400';s.innerHTML='🎤 voice.webm <button onclick="this.parentElement.remove()" class="hover:text-red-500">✕</button>';$('#f-prev').appendChild(s)};mediaRec.start();$('#mic-btn').classList.add('text-red-500')}).catch(()=>alert('Microphone access denied'))}
 
-// ── Copy conversation ────────────────────────────────────────────────────────
-$('#copy-chat-btn').addEventListener('click',()=>{
-  const text=history.map(m=>`${m.role}: ${m.content}`).join('\n\n');
-  navigator.clipboard.writeText(text).then(()=>{$('#copy-chat-btn').innerHTML='✓';setTimeout(()=>{$('#copy-chat-btn').innerHTML='<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'},1500)});
-});
+// Send
+function send(){const inp=$('#c-in'),text=inp.value.trim();if(!text&&!files.length)return;if(streaming)return;let display=text;if(files.length)display+=(text?'\n':'')+files.map(f=>'📎 '+f.name).join('\n');addMsg('user',display);hist.push({role:'user',content:text});inp.value='';inp.style.height='auto';files=[];$('#f-prev').innerHTML='';$('#f-prev').classList.add('hidden');toggleIn(false);if(!chatId){fetch('/api/chats',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:text.substring(0,30)})}).then(r=>r.json()).then(d=>{chatId=d.id;loadChats();doSend(text)})}else doSend(text)}
+function doSend(text){if(!ws||ws.readyState!==WebSocket.OPEN){connectWS();setTimeout(()=>_send(text),500)}else _send(text)}
+function _send(t){if(!ws||ws.readyState!==WebSocket.OPEN){addMsg('assistant','⚠️ Not connected. Load a model first.');toggleIn(true);return}ws.send(JSON.stringify({message:t,history:hist.slice(0,-1),system_prompt:$('#sp').value,temperature:parseFloat($('#temp').value),max_tokens:parseInt($('#mtok').value)}))}
 
-// ── Terminal / Logs ──────────────────────────────────────────────────────────
-async function refreshLogs(){
-  const r=await fetch('/api/logs?n=100');const d=await r.json();
-  $('#terminal').innerHTML=d.logs.map(l=>`<div>${escHtml(l)}</div>`).join('');
-  if(autoScroll)$('#terminal').scrollTop=$('#terminal').scrollHeight;
-}
-$('#refresh-logs').addEventListener('click',refreshLogs);
-$('#auto-scroll').addEventListener('click',function(){autoScroll=!autoScroll;this.textContent=`Auto-scroll: ${autoScroll?'ON':'OFF'}`});
-setInterval(()=>{if(!$('#tab-terminal').classList.contains('hidden'))refreshLogs()},2000);
+// Copy
+function copyChat(){navigator.clipboard.writeText(hist.map(m=>`${m.role}: ${m.content}`).join('\n\n'))}
+document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();copyChat()}});
 
-// ── Help btn ─────────────────────────────────────────────────────────────────
-$('#help-btn').addEventListener('click',()=>{$$('.tab-btn').forEach(b=>{b.classList.remove('active','text-fig-500')});$$('.tab-content').forEach(c=>c.classList.add('hidden'));$('[data-tab="docs"]').classList.add('active','text-fig-500');$('#tab-docs').classList.remove('hidden')});
+// Terminal WS
+function connectTerm(){if(termWs&&termWs.readyState===WebSocket.OPEN)return;const p=location.protocol==='https:'?'wss':'ws';termWs=new WebSocket(`${p}://${location.host}/api/terminal`);termWs.onmessage=e=>{const d=JSON.parse(e.data);if(d.type==='log'){const el=document.createElement('div');el.textContent=d.content;$('#term').appendChild(el);$('#term').scrollTop=$('#term').scrollHeight}};termWs.onclose=()=>termWs=null}
+function runCmd(){const inp=$('#term-in'),cmd=inp.value.trim();if(!cmd)return;if(!termWs||termWs.readyState!==WebSocket.OPEN){connectTerm();setTimeout(()=>{termWs.send(JSON.stringify({command:cmd}))},500)}else termWs.send(JSON.stringify({command:cmd}));inp.value=''}
 
-// ── Connect WS if model already loaded ───────────────────────────────────────
+// Init
 fetch('/api/model/status').then(r=>r.json()).then(d=>{if(d.loaded)connectWS()}).catch(()=>{});
-
-// ── Ctrl+Shift+C shortcut ────────────────────────────────────────────────────
-document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();$('#copy-chat-btn').click()}});
 </script>
 </body>
 </html>

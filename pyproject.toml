@@ -12,42 +12,35 @@ requires-python = ">=3.9"
 dependencies = [
     # NOTE: torch is NOT listed here intentionally.
     # pip install torch by default grabs the CUDA build (~2.5GB).
-    # Install it manually first:
+    # Install CPU-only torch first:
     #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-    "transformers>=4.38.0",
-    "sentencepiece",
-    "protobuf",
-    "psutil",
+    "transformers>=4.40.0,<5.0.0",
+    "sentencepiece>=0.1.99",
+    "protobuf>=3.20.0",
+    "psutil>=5.9.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
 
 # Fine-tuning with Fig Engine: pip install -e ".[train]"
 train = [
-    "datasets>=2.18.0",
-    "peft>=0.9.0",
+    "datasets>=2.18.0,<4.0.0",
 ]
 
 # Full install (inference + training + studio UI)
 full = [
-    "datasets>=2.18.0",
-    "peft>=0.9.0",
-    "gradio>=4.0.0",
-    "accelerate>=0.27.0",
+    "datasets>=2.18.0,<4.0.0",
+    "gradio>=4.0.0,<6.0.0",
+    "accelerate>=0.27.0,<2.0.0",
 ]
 
-# Legacy fine-tuning (v0.3 trainer, uses TRL)
+# Legacy fine-tuning (v0.3 trainer, uses PEFT + HF Trainer)
 legacy = [
-    "peft>=0.9.0",
-    "datasets>=2.18.0",
-    "trl>=0.8.0",
-    "accelerate>=0.27.0",
+    "peft>=0.9.0,<1.0.0",
+    "datasets>=2.18.0,<4.0.0",
+    "accelerate>=0.27.0,<2.0.0",
 ]
-
-# NOTE: llama-cpp-python is NOT here intentionally.
-# It requires a platform-specific install to avoid accidentally
-# triggering a CUDA compile on CPU-only machines.
-# Install it manually — see scripts/install_deps.py
 
 [project.scripts]
 little-fig       = "little_fig:start"

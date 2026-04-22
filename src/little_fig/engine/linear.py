@@ -113,7 +113,8 @@ class FigLinear(nn.Module):
         self.out_features = out_features
         self.lora_r = lora_r
         self.lora_alpha = lora_alpha
-        self.lora_scale = lora_alpha / lora_r
+        self.lora_scale = lora_alpha / lora_r if lora_r > 0 else 0.0
+        self.use_lora = lora_r > 0
         
         # Frozen INT4 base weights (registered as buffers — not parameters)
         self.register_buffer("q_packed", fig4.packed)
@@ -130,16 +131,17 @@ class FigLinear(nn.Module):
         else:
             self.bias = None
         
-        # LoRA adapters (trainable)
-        self.lora_A = nn.Parameter(torch.empty(in_features, lora_r))
-        self.lora_B = nn.Parameter(torch.empty(lora_r, out_features))
-        
-        # Initialize LoRA: A with Kaiming, B with zeros (output starts at 0)
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
-        
-        # Dropout
-        self.lora_dropout = nn.Dropout(lora_dropout) if lora_dropout > 0 else nn.Identity()
+        # LoRA adapters (trainable) — only if lora_r > 0
+        if self.use_lora:
+            self.lora_A = nn.Parameter(torch.empty(in_features, lora_r))
+            self.lora_B = nn.Parameter(torch.empty(lora_r, out_features))
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+            self.lora_dropout = nn.Dropout(lora_dropout) if lora_dropout > 0 else nn.Identity()
+        else:
+            self.lora_A = None
+            self.lora_B = None
+            self.lora_dropout = None
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Base: dequant + matmul (custom autograd saves memory)
@@ -148,9 +150,10 @@ class FigLinear(nn.Module):
             self.q_shape, self.q_n_groups, self.q_group_size, self.q_numel,
         )
         
-        # LoRA correction
-        lora_out = (self.lora_dropout(x) @ self.lora_A) @ self.lora_B * self.lora_scale
-        h = h + lora_out
+        # LoRA correction (only if LoRA is enabled)
+        if self.use_lora:
+            lora_out = (self.lora_dropout(x) @ self.lora_A) @ self.lora_B * self.lora_scale
+            h = h + lora_out
         
         # Bias
         if self.bias is not None:
@@ -170,16 +173,17 @@ class FigLinear(nn.Module):
         )
         W = _dequantize_int4(q)
         
-        # LoRA merge: W_merged = W + (B @ A).T * scale
-        # W shape: (out_features, in_features)
-        # A shape: (in_features, r), B shape: (r, out_features)
-        lora_weight = (self.lora_A @ self.lora_B).T * self.lora_scale
+        if self.use_lora:
+            lora_weight = (self.lora_A @ self.lora_B).T * self.lora_scale
+            W = W + lora_weight
         
-        return W + lora_weight
+        return W
     
     @property
     def trainable_params(self) -> int:
-        return self.lora_A.numel() + self.lora_B.numel()
+        if self.use_lora:
+            return self.lora_A.numel() + self.lora_B.numel()
+        return 0
     
     @property
     def total_params(self) -> int:

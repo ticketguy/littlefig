@@ -1,15 +1,12 @@
 """
-Little Fig — Model Engine
-Handles both CPU and GPU. Gemma-aware (4B-IT and others).
-Two backends: HuggingFace (transformers) and GGUF (llama-cpp-python).
+Little Fig — Model Engine (v0.4)
 
-Gemma 4B-IT on CPU:
-  - HF float32: ~16GB RAM, ~30-60s per response. Feasible if you have RAM.
-  - GGUF Q4_K_M: ~3GB RAM, ~5-10s per response. Recommended.
+Unified inference backend. Loads any HuggingFace model, with two modes:
+    1. Full FP32 (for small models or machines with enough RAM)
+    2. Fig Engine INT4 (for large models on limited RAM)
 
-Gemma 4B-IT on GPU (when you get one):
-  - HF float16: ~8GB VRAM, ~1-2s per response.
-  - Auto-detected at startup via __init__.HW
+No more GGUF dependency — Fig Engine INT4 replaces it with pure PyTorch.
+Works with any model on HuggingFace Hub, any architecture.
 """
 
 import os
@@ -18,11 +15,10 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TextIteratorStreamer,
-    BitsAndBytesConfig,
 )
 from threading import Thread
-from typing import Iterator, Optional, Tuple
-from dataclasses import dataclass, field
+from typing import Iterator, Optional
+from dataclasses import dataclass
 
 
 # ── Generation config ─────────────────────────────────────────────────────────
@@ -37,62 +33,37 @@ class FigInferenceConfig:
     do_sample: bool = True
 
 
-# ── Model identity helpers ────────────────────────────────────────────────────
-
-KNOWN_MODELS = {
-    # model_id substring → display info
-    "gemma": {
-        "chat_format": "gemma",
-        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
-    },
-    "tinyllama": {
-        "chat_format": "chatml",
-        "target_modules": ["q_proj", "v_proj"],
-    },
-    "phi": {
-        "chat_format": "phi",
-        "target_modules": ["q_proj", "v_proj", "fc1", "fc2"],
-    },
-    "llama": {
-        "chat_format": "llama",
-        "target_modules": ["q_proj", "v_proj"],
-    },
-    "mistral": {
-        "chat_format": "llama",
-        "target_modules": ["q_proj", "v_proj"],
-    },
-}
-
-
-def _get_model_info(model_name: str) -> dict:
-    name_lower = model_name.lower()
-    for key, info in KNOWN_MODELS.items():
-        if key in name_lower:
-            return info
-    return {"chat_format": "default", "target_modules": ["q_proj", "v_proj"]}
-
-
-def _get_lora_target_modules(model_name: str) -> list:
-    return _get_model_info(model_name)["target_modules"]
-
-
-# ── HuggingFace loader ────────────────────────────────────────────────────────
+# ── Unified Model ─────────────────────────────────────────────────────────────
 
 class FigLanguageModel:
     """
-    HuggingFace transformers backend.
-    Auto-selects dtype and device_map from hardware detection.
+    Unified inference model for Little Fig.
 
-    For Gemma 4B on CPU: needs ~16GB RAM in float32.
-    For Gemma 4B on GPU: needs ~8GB VRAM in float16.
+    Supports any HuggingFace causal LM. Two loading modes:
+        - FP32: standard HuggingFace loading
+        - INT4 (Fig Engine): 7.1× less RAM, works on 8GB machines
+
+    Usage:
+        # Auto-detect best loading strategy
+        model = FigLanguageModel.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+
+        # Force INT4 (for low-RAM machines)
+        model = FigLanguageModel.from_pretrained("google/gemma-3-4b-it", use_int4=True)
+
+        # Chat
+        response = model.generate("Hello, how are you?")
+
+        # Streaming
+        for chunk in model.stream("Tell me a story"):
+            print(chunk, end="")
     """
 
-    def __init__(self, model, tokenizer, model_name: str = ""):
+    def __init__(self, model, tokenizer, model_name: str = "", is_fig_engine: bool = False):
         self.model = model
         self.tokenizer = tokenizer
         self.model_name = model_name
         self.config = FigInferenceConfig()
-        self._model_info = _get_model_info(model_name)
+        self.is_fig_engine = is_fig_engine
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -102,48 +73,83 @@ class FigLanguageModel:
     def from_pretrained(
         model_name: str,
         hw: Optional[dict] = None,
+        use_int4: Optional[bool] = None,
     ) -> "FigLanguageModel":
         """
-        Load a model. Pass hw=HW from __init__ for auto GPU/CPU config,
-        or leave None to auto-detect.
+        Load any HuggingFace model for inference.
+
+        Args:
+            model_name: HuggingFace model ID (e.g., "TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+            hw: Hardware config dict (auto-detected if None)
+            use_int4: Force INT4 mode (None = auto-detect based on RAM)
         """
         if hw is None:
             from little_fig import HW
             hw = HW
 
         gpu = hw.get("gpu_available", False)
-        dtype = hw.get("recommended_dtype", torch.float32)
 
-        print(f"🍐 Loading: {model_name}")
-        print(f"   Device : {'GPU (' + hw.get('gpu_name', '') + ')' if gpu else 'CPU'}")
-        print(f"   dtype  : {dtype}")
+        # Auto-detect whether to use INT4
+        if use_int4 is None:
+            ram_gb = hw.get("ram_available_gb", 16)
+            # Use INT4 if less than 8GB available, or if model name suggests large
+            large_model = any(x in model_name.lower() for x in ["4b", "7b", "8b", "13b", "70b", "gemma-3"])
+            use_int4 = (not gpu) and (ram_gb < 12 or large_model)
 
-        load_kwargs = {
-            "torch_dtype": dtype,
-            "low_cpu_mem_usage": True,
-        }
-
-        if gpu:
-            load_kwargs["device_map"] = "auto"
+        if use_int4:
+            return FigLanguageModel._load_int4(model_name, hw)
         else:
-            load_kwargs["device_map"] = "cpu"
-            # On CPU, warn about RAM for large models
-            if "gemma" in model_name.lower() and "4b" in model_name.lower():
-                print("   ⚠  Gemma 4B float32 needs ~16GB RAM.")
-                print("   ⚠  If you hit OOM, use GGUF instead (FigGGUFModel).")
+            return FigLanguageModel._load_fp32(model_name, hw)
+
+    @staticmethod
+    def _load_fp32(model_name: str, hw: dict) -> "FigLanguageModel":
+        """Load model in full FP32 (standard HuggingFace)."""
+        gpu = hw.get("gpu_available", False)
+        dtype = torch.float16 if gpu else torch.float32
+
+        print(f"🍐 Loading: {model_name} (FP32)")
+        print(f"   Device : {'GPU' if gpu else 'CPU'}")
+
+        load_kwargs = {"torch_dtype": dtype, "low_cpu_mem_usage": True}
+
+        # Try with device_map first (needs accelerate), fall back without
+        try:
+            load_kwargs["device_map"] = "auto" if gpu else "cpu"
+            model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
+        except (ImportError, ValueError):
+            load_kwargs.pop("device_map", None)
+            model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
         model.eval()
 
         param_count = sum(p.numel() for p in model.parameters()) / 1e9
         print(f"   ✓ {param_count:.2f}B parameters loaded")
 
-        return FigLanguageModel(model, tokenizer, model_name)
+        return FigLanguageModel(model, tokenizer, model_name, is_fig_engine=False)
+
+    @staticmethod
+    def _load_int4(model_name: str, hw: dict) -> "FigLanguageModel":
+        """Load model with Fig Engine INT4 quantization (7.1× less RAM)."""
+        from little_fig.engine.model import FigModel
+
+        print(f"🍐 Loading: {model_name} (Fig Engine INT4)")
+
+        fig_model = FigModel.from_pretrained(
+            model_name,
+            lora_r=0,       # No LoRA for inference-only
+            lora_alpha=0,
+        )
+        fig_model.model.eval()
+
+        return FigLanguageModel(
+            fig_model.model, fig_model.tokenizer, model_name, is_fig_engine=True
+        )
 
     # ── Inference ─────────────────────────────────────────────────────────────
 
     def generate(self, prompt: str) -> str:
+        """Generate a complete response."""
         inputs = self._encode(prompt)
         with torch.no_grad():
             outputs = self.model.generate(
@@ -161,6 +167,7 @@ class FigLanguageModel:
         return self.tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True)
 
     def stream(self, prompt: str) -> Iterator[str]:
+        """Generate response with streaming."""
         inputs = self._encode(prompt)
         streamer = TextIteratorStreamer(
             self.tokenizer, skip_prompt=True, skip_special_tokens=True
@@ -182,6 +189,7 @@ class FigLanguageModel:
         thread.join()
 
     def _encode(self, prompt: str) -> dict:
+        """Tokenize and move to model device."""
         device = next(self.model.parameters()).device
         return self.tokenizer(
             prompt,
@@ -193,18 +201,28 @@ class FigLanguageModel:
 
     def apply_chat_template(self, message: str, history: list) -> str:
         """
-        Build a proper chat prompt. Uses the model's built-in chat template
-        if available (Gemma, TinyLlama, etc. all have one).
+        Build a chat prompt from message + history.
+
+        History format: list of {"role": ..., "content": ...} dicts
+        (Gradio messages format, compatible with Gradio 4.x+)
         """
         messages = []
-        for user_msg, bot_msg in history:
-            if user_msg:
-                messages.append({"role": "user", "content": user_msg})
-            if bot_msg:
-                messages.append({"role": "assistant", "content": bot_msg})
+
+        # History is a list of message dicts (Gradio messages format)
+        for msg in history:
+            if isinstance(msg, dict):
+                messages.append(msg)
+            elif isinstance(msg, (list, tuple)) and len(msg) == 2:
+                # Legacy tuple format: (user_msg, bot_msg)
+                user_msg, bot_msg = msg
+                if user_msg:
+                    messages.append({"role": "user", "content": str(user_msg)})
+                if bot_msg:
+                    messages.append({"role": "assistant", "content": str(bot_msg)})
+
         messages.append({"role": "user", "content": message})
 
-        # Use the tokenizer's own chat template (most modern models have this)
+        # Use the tokenizer's built-in chat template (most modern models have this)
         if hasattr(self.tokenizer, "chat_template") and self.tokenizer.chat_template:
             try:
                 return self.tokenizer.apply_chat_template(
@@ -213,150 +231,12 @@ class FigLanguageModel:
                     add_generation_prompt=True,
                 )
             except Exception:
-                pass  # Fall through to manual format
+                pass  # Fall through to generic fallback
 
-        # Manual fallback by model family
-        fmt = self._model_info.get("chat_format", "default")
-
-        if fmt == "gemma":
-            prompt = ""
-            for msg in messages:
-                role = "user" if msg["role"] == "user" else "model"
-                prompt += f"<start_of_turn>{role}\n{msg['content']}<end_of_turn>\n"
-            prompt += "<start_of_turn>model\n"
-            return prompt
-
-        if fmt == "chatml":
-            prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-            for msg in messages:
-                prompt += f"<|im_start|>{msg['role']}\n{msg['content']}<|im_end|>\n"
-            prompt += "<|im_start|>assistant\n"
-            return prompt
-
-        # Generic fallback
+        # Generic fallback — works for any model
         prompt = ""
         for msg in messages:
             role = msg["role"].capitalize()
             prompt += f"{role}: {msg['content']}\n"
         prompt += "Assistant:"
-        return prompt
-
-
-# ── GGUF loader ───────────────────────────────────────────────────────────────
-
-class FigGGUFModel:
-    """
-    GGUF backend via llama-cpp-python.
-    Recommended for Gemma 4B on CPU — 4-8x faster than HF float32.
-
-    Install:
-        pip install llama-cpp-python
-
-    Download Gemma 4B Q4 (~2.5GB):
-        huggingface-cli download bartowski/gemma-3-4b-it-GGUF \\
-            gemma-3-4b-it-Q4_K_M.gguf --local-dir ./models
-    """
-
-    def __init__(self, llm, model_path: str = ""):
-        self._llm = llm
-        self.model_name = os.path.basename(model_path)
-        self.config = FigInferenceConfig()
-        self._model_info = _get_model_info(model_path)
-
-    @staticmethod
-    def from_gguf(
-        path: str,
-        context_length: int = 4096,
-        hw: Optional[dict] = None,
-    ) -> Tuple["FigGGUFModel", None]:
-        try:
-            from llama_cpp import Llama
-        except ImportError:
-            raise ImportError(
-                "\n🍐 llama-cpp-python not installed.\n"
-                "   pip install llama-cpp-python\n"
-            )
-
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"\n🍐 GGUF file not found: {path}\n"
-                "   Download from HuggingFace. See README.\n"
-            )
-
-        if hw is None:
-            from little_fig import HW
-            hw = HW
-
-        n_gpu_layers = 0
-        if hw.get("gpu_available"):
-            # Offload all layers to GPU if available
-            n_gpu_layers = -1
-            print(f"🍐 GGUF: GPU offload enabled ({hw.get('gpu_name', 'GPU')})")
-
-        print(f"🍐 Loading GGUF: {os.path.basename(path)}")
-        print(f"   Context : {context_length} tokens")
-        print(f"   Threads : {os.cpu_count()} CPU cores")
-
-        llm = Llama(
-            model_path=path,
-            n_ctx=context_length,
-            n_threads=os.cpu_count(),
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
-        )
-
-        print(f"   ✓ GGUF model ready")
-        return FigGGUFModel(llm, path), None
-
-    def generate(self, prompt: str) -> str:
-        output = self._llm(
-            prompt,
-            max_tokens=self.config.max_new_tokens,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
-            top_k=self.config.top_k,
-            repeat_penalty=self.config.repetition_penalty,
-            echo=False,
-            stop=["<end_of_turn>", "<|im_end|>", "\nUser:", "\nHuman:"],
-        )
-        return output["choices"][0]["text"].strip()
-
-    def stream(self, prompt: str) -> Iterator[str]:
-        stream = self._llm(
-            prompt,
-            max_tokens=self.config.max_new_tokens,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
-            repeat_penalty=self.config.repetition_penalty,
-            echo=False,
-            stream=True,
-            stop=["<end_of_turn>", "<|im_end|>", "\nUser:", "\nHuman:"],
-        )
-        for chunk in stream:
-            token = chunk["choices"][0]["text"]
-            if token:
-                yield token
-
-    def apply_chat_template(self, message: str, history: list) -> str:
-        """Gemma-format prompt. Works for Gemma GGUF models."""
-        fmt = self._model_info.get("chat_format", "gemma")
-
-        if fmt == "gemma":
-            prompt = ""
-            for user_msg, bot_msg in history:
-                if user_msg:
-                    prompt += f"<start_of_turn>user\n{user_msg}<end_of_turn>\n"
-                if bot_msg:
-                    prompt += f"<start_of_turn>model\n{bot_msg}<end_of_turn>\n"
-            prompt += f"<start_of_turn>user\n{message}<end_of_turn>\n<start_of_turn>model\n"
-            return prompt
-
-        # chatml fallback
-        prompt = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
-        for user_msg, bot_msg in history:
-            if user_msg:
-                prompt += f"<|im_start|>user\n{user_msg}<|im_end|>\n"
-            if bot_msg:
-                prompt += f"<|im_start|>assistant\n{bot_msg}<|im_end|>\n"
-        prompt += f"<|im_start|>user\n{message}<|im_end|>\n<|im_start|>assistant\n"
         return prompt

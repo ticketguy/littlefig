@@ -5,7 +5,6 @@ Detects hardware at startup and configures the runtime accordingly.
 
 import sys
 import os
-import torch
 
 
 def detect_hardware():
@@ -13,39 +12,44 @@ def detect_hardware():
     Detect available hardware and return a config dict.
     This runs at startup before anything else.
     """
+    import psutil
+
     hw = {
         "device": "cpu",
         "gpu_available": False,
         "gpu_name": None,
         "gpu_vram_gb": None,
         "cpu_cores": os.cpu_count(),
-        "torch_version": torch.__version__,
-        "recommended_dtype": torch.float32,
-        "recommended_backend": "hf",  # "hf" or "gguf"
+        "ram_total_gb": round(psutil.virtual_memory().total / (1024**3), 1),
+        "ram_available_gb": round(psutil.virtual_memory().available / (1024**3), 1),
+        "recommended_dtype": "float32",
+        "recommended_backend": "fig_engine",
     }
 
-    if torch.cuda.is_available():
-        hw["gpu_available"] = True
-        hw["device"] = "cuda"
-        hw["gpu_name"] = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-        hw["gpu_vram_gb"] = round(vram, 1)
-        hw["recommended_dtype"] = torch.float16
-        hw["recommended_backend"] = "hf"
+    try:
+        import torch
+        hw["torch_version"] = torch.__version__
 
-        # VRAM guidance for model selection
-        if vram >= 16:
-            hw["model_tier"] = "large"     # 7B+ fine-tuning possible
-        elif vram >= 8:
-            hw["model_tier"] = "medium"    # 4B fine-tuning, 7B inference
+        if torch.cuda.is_available():
+            hw["gpu_available"] = True
+            hw["device"] = "cuda"
+            hw["gpu_name"] = torch.cuda.get_device_name(0)
+            vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            hw["gpu_vram_gb"] = round(vram, 1)
+            hw["recommended_dtype"] = "float16"
+
+            if vram >= 16:
+                hw["model_tier"] = "large"
+            elif vram >= 8:
+                hw["model_tier"] = "medium"
+            else:
+                hw["model_tier"] = "small"
         else:
-            hw["model_tier"] = "small"     # 1-3B fine-tuning
-    else:
-        # CPU — force off CUDA even if something claims otherwise
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        os.environ["FORCE_CPU"] = "1"
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            hw["model_tier"] = "cpu"
+    except ImportError:
+        hw["torch_version"] = "not installed"
         hw["model_tier"] = "cpu"
-        hw["recommended_backend"] = "gguf"  # GGUF is faster on CPU
 
     return hw
 
@@ -54,22 +58,21 @@ def print_startup_banner(hw: dict):
     fig = """
   ╔══════════════════════════════════════════╗
   ║           🍐  L I T T L E  F I G        ║
-  ║      CPU-native LLM engine v0.2.0        ║
+  ║     CPU-native LLM engine  v0.4.0       ║
+  ║         Powered by Fig Engine           ║
   ╚══════════════════════════════════════════╝"""
     print(fig)
 
-    if hw["gpu_available"]:
+    if hw.get("gpu_available"):
         print(f"  ⚡ GPU detected : {hw['gpu_name']}")
         print(f"  ⚡ VRAM         : {hw['gpu_vram_gb']} GB")
-        print(f"  ⚡ dtype        : float16 (GPU mode)")
     else:
         print(f"  💻 Device       : CPU ({hw['cpu_cores']} cores)")
-        print(f"  💻 dtype        : float32")
-        print(f"  💡 Tip          : GGUF models run 4-8x faster on CPU")
-        print(f"                    See README for download instructions")
+        print(f"  💻 RAM          : {hw.get('ram_available_gb', '?')} GB available / {hw.get('ram_total_gb', '?')} GB total")
 
-    print(f"  🔧 PyTorch      : {hw['torch_version']}")
+    print(f"  🔧 PyTorch      : {hw.get('torch_version', 'N/A')}")
     print(f"  🔧 Python       : {sys.version.split()[0]}")
+    print(f"  🔧 Backend      : Fig Engine (INT4 streaming)")
     print()
 
 
@@ -85,7 +88,7 @@ def start():
         run_studio(hw=HW)
     except ImportError as e:
         print(f"❌ Could not load studio module: {e}")
-        print("   Make sure studio/__init__.py exists.")
+        print("   Install with: pip install -e '.[full]'")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Startup error: {e}")

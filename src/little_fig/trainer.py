@@ -308,7 +308,7 @@ class FigTrainer:
             logging_steps=self.config.logging_steps,
             save_steps=self.config.save_steps,
             save_total_limit=self.config.save_total_limit,
-            no_cuda=not self.hw.get("gpu_available", False),
+            use_cpu=not self.hw.get("gpu_available", False),
             fp16=self.config.use_fp16,
             bf16=self.config.use_bf16,
             dataloader_pin_memory=self.hw.get("gpu_available", False),

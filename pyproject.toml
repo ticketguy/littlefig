@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-fig"
-version = "0.4.0"
-description = "Little Fig: CPU-native LLM training engine with Fig Engine (INT4 streaming + adaptive training tiers)"
+version = "0.5.0"
+description = "Little Fig: CPU-native LLM engine with FigQuant, FigKernel, and custom web UI"
 readme = "READme.md"
 requires-python = ">=3.9"
 
@@ -21,6 +21,9 @@ dependencies = [
     "numpy>=1.24.0",
     "gguf>=0.6.0",
     "accelerate>=0.27.0,<2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "python-multipart>=0.0.5",
 ]
 
 [project.optional-dependencies]
@@ -30,11 +33,10 @@ train = [
     "datasets>=2.18.0,<4.0.0",
 ]
 
-# Full install (inference + training + studio UI)
+# Full install (inference + training + UI)
 full = [
     "datasets>=2.18.0,<4.0.0",
     "gradio>=4.0.0,<7.0.0",
-    "accelerate>=0.27.0,<2.0.0",
 ]
 
 # Legacy fine-tuning (v0.3 trainer, uses PEFT + HF Trainer)
@@ -51,3 +53,6 @@ little-fig-train = "little_fig.trainer:cli_train"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["little_fig*"]
+
+[tool.setuptools.package-data]
+"little_fig.web" = ["static/**/*"]

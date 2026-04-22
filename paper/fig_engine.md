@@ -2,7 +2,7 @@
 
 **Authors:** ticketguy  
 **Repository:** https://github.com/ticketguy/littlefig  
-**Version:** 0.4.0
+**Version:** 0.5.0
 
 ---
 
@@ -170,13 +170,47 @@ Full pipeline test on GPT-2 (124M parameters):
 
 Both optimizers successfully reduce loss on a simple regression task, verifying correct implementation.
 
+### 4.5 FigQuant: Adaptive Codebook Quantization (v0.5)
+
+FigQuant refines an NF4-base codebook via weighted k-means on the actual weight distribution. High-magnitude weights receive extra precision via sensitivity weighting (inspired by AWQ).
+
+| Method | Cosine Sim | MSE | SNR (dB) | Bits/param |
+|--------|-----------|------|----------|------------|
+| **FigQuant** (adaptive codebook) | **0.9955** | **0.0090** | **20.5** | 4.31 |
+| FIG4 (asymmetric INT4) | 0.9951 | 0.0100 | 20.0 | 4.16 |
+
+FigQuant achieves a **9.7% MSE reduction** over standard asymmetric INT4 with comparable bits per parameter. The improvement comes from the codebook adapting to the actual weight distribution rather than assuming uniform spacing.
+
+### 4.6 FigKernel: Fused Operations via torch.compile (v0.5)
+
+We write clean PyTorch operations and let `torch.compile(backend="inductor")` fuse them. This generates AVX-512 on CPU and CUDA on GPU from the same source code. Unlike Triton kernels (Unsloth/Liger), this works on CPU.
+
+**Benchmarks** (CPU, 2048 hidden, seq_len=256):
+
+| Operation | Standard PyTorch | FigKernel | Speedup |
+|-----------|-----------------|-----------|---------|
+| RMSNorm | 4.72 ms | 1.60 ms | **2.95×** |
+| nn.Linear (768→2048) | 4.60 ms | — | baseline |
+| FigLinear+LoRA (fast mode) | — | 6.55 ms | 0.70× (LoRA overhead) |
+| FigLinear+LoRA (low-RAM) | — | 8.11 ms | 0.57× |
+
+The fused RMSNorm shows the largest speedup (2.95×) because inductor fuses the variance, rsqrt, and scale into a single vectorized pass.
+
+**Chunked Cross-Entropy**: For vocab=32K, standard CE materializes a [seq_len, 32K] tensor. Chunked CE processes 4K-vocab slices, accumulating logsumexp with numerically stable running max/sum. This reduces peak memory by ~8× at the cost of ~1.8× compute on CPU (favorable tradeoff for memory-constrained training).
+
+### 4.7 FigPipeline: Async GPU-CPU Training (v0.5)
+
+FigPipeline keeps optimizer states (exp_avg, exp_avg_sq) on CPU while compute runs on GPU. For LoRA with rank 16, gradient transfer per layer is ~100KB — negligible vs PCIe bandwidth.
+
+For parameters < 100K elements (typical LoRA adapters), updates run directly on GPU (faster than transfer overhead). For larger parameters, updates are pipelined via CUDA streams.
+
 ---
 
 ## 5. Limitations and Future Work
 
-1. **Dequantization overhead**: Our current Python-level dequantization adds ~2× overhead compared to FP32 matmul on CPU. A custom C/AVX-512 kernel that fuses dequantization into the tiled matmul loop would eliminate this, potentially making INT4 *faster* than FP32 (less memory traffic).
+1. **Dequantization overhead**: Our current Python-level dequantization adds ~1.4× overhead compared to FP32 matmul on CPU. The FigKernel fused ops (v0.5) reduce this via torch.compile, but a custom C/AVX-512 kernel could eliminate it entirely.
 
-2. **torch.compile integration**: We measured 3.9× speedup from `torch.compile(backend="inductor")` on full transformer blocks. Integrating this deeply into the training loop (compiling the full forward+backward) would provide substantial speedup.
+2. ~~**torch.compile integration**~~: ✅ **Done in v0.5.** FigKernel provides torch.compile fused ops for RMSNorm (2.95× speedup), SwiGLU, and Linear+LoRA. The inductor backend generates optimized AVX-512 code on CPU and CUDA code on GPU from the same Python source.
 
 3. **Disk-based activation checkpointing**: For extreme memory constraints, activations could be checkpointed to NVMe SSD (2-5 GB/s sequential read), which approaches our measured CPU memory bandwidth (5-8 GB/s).
 
@@ -188,7 +222,7 @@ Both optimizers successfully reduce loss on a simple regression task, verifying 
 
 ## 6. Conclusion
 
-Fig Engine demonstrates that LLM fine-tuning on CPU with 8GB RAM is not only feasible but practical, by combining INT4 streaming quantization with adaptive training method selection. The system automatically picks the best training strategy for the available hardware, enabling practitioners without GPU access to fine-tune models up to 8B parameters.
+Fig Engine demonstrates that LLM fine-tuning on CPU with 8GB RAM is not only feasible but practical, by combining INT4 streaming quantization with adaptive training method selection. Version 0.5 adds three new subsystems — FigQuant (adaptive codebook quantization, 9.7% less error), FigKernel (torch.compile fused ops, 2.95× RMSNorm speedup), and FigPipeline (async GPU-CPU training) — that further close the gap with GPU-native tools. The system automatically picks the best training strategy for the available hardware, enabling practitioners without GPU access to fine-tune models up to 8B parameters.
 
 The key insight is that CPU training is memory-bandwidth bound — not compute-bound — and every architectural decision must minimize bytes moved through the memory bus. Our INT4 quantization reduces weight memory by 7.1×, our DequantMatmul avoids persisting FP32 weights, and our adaptive tier system ensures no memory is wasted on optimizer states or gradients that don't contribute to the selected training method.
 
@@ -208,3 +242,5 @@ The key insight is that CPU training is memory-bandwidth bound — not compute-b
 10. Wang, J., et al. (2024). "BitNet.cpp: Efficient Edge Inference for Ternary LLMs." arxiv 2502.11880.
 11. Liao, B., et al. (2023). "Make Pre-trained Model Reversible: From Parameter to Memory Efficient Fine-Tuning." arxiv 2306.00477.
 12. von Werra, L., et al. (2023). "TRL: Transformer Reinforcement Learning." github.com/huggingface/trl.
+13. Lin, J., et al. (2024). "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024.
+14. Hsu, Y.-C., et al. (2024). "Liger Kernel: Efficient Triton Kernels for LLM Training." arxiv 2410.10989.

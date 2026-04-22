@@ -1,0 +1,34 @@
+{
+  "figquant_quality": {
+    "cosine_similarity": 0.9955234527587891,
+    "mse": 0.009003433398902416,
+    "max_error": 0.45174360275268555,
+    "snr_db": 20.461803505486053,
+    "bits_per_param": 4.3128662109375,
+    "compression_ratio": 7.419659788853981
+  },
+  "figquant_vs_fig4": {
+    "figquant_cosine": 0.995514452457428,
+    "figquant_mse": 0.009011398069560528,
+    "figquant_snr": 20.4566364505939,
+    "fig4_cosine": 0.9951124787330627,
+    "fig4_mse": 0.009974843822419643
+  },
+  "bench_quant": {
+    "fig4_quantize_ms": 9.2101592104882,
+    "figquant_quantize_ms": 988.2470300421119,
+    "fig4_dequantize_ms": 4.411042272113264,
+    "figquant_dequantize_ms": 5.633869394659996
+  },
+  "bench_fused": {
+    "rmsnorm_standard_ms": 4.718310525640845,
+    "rmsnorm_fig_ms": 1.6004668781533837,
+    "ce_standard_ms": 110.40393782313913,
+    "ce_chunked_ms": 195.6063694320619
+  },
+  "bench_linear": {
+    "nn_linear_ms": 4.595175106078386,
+    "figlinear_fast_ms": 6.54518052469939,
+    "figlinear_lowram_ms": 8.109792158938944
+  }
+}

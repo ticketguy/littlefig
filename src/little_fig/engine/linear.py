@@ -142,9 +142,19 @@ class FigLinear(nn.Module):
             self.lora_dropout = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Base matmul
+        # FAST MODE with fused kernel (when cached weight available)
+        if self._cached_W is not None and self.use_lora:
+            try:
+                from .figkernel import fig_fused_linear_lora
+                return fig_fused_linear_lora(
+                    x, self._cached_W, self.lora_A, self.lora_B,
+                    self.lora_scale, self.bias,
+                )
+            except Exception:
+                pass  # Fall through to non-fused path
+
+        # Non-fused path: base matmul
         if self._cached_W is not None:
-            # FAST MODE: use cached FP32 weight (no dequant overhead)
             h = F.linear(x, self._cached_W)
         else:
             # LOW-RAM MODE: dequant on-the-fly via custom autograd

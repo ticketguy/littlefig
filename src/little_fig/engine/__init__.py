@@ -9,6 +9,11 @@ Key innovation: Layer-streaming with on-the-fly INT4 dequantization eliminates
 the need to hold the full model in RAM. A 4B parameter model can be fine-tuned
 in under 3GB of RAM.
 
+New in v0.5:
+  - FigQuant: Adaptive codebook INT4 (NF4-refined + sensitivity weighting)
+  - FigKernel: torch.compile fused ops (RMSNorm, SwiGLU, LinearLoRA, CrossEntropy)
+  - FigPipeline: Async GPU-CPU training with CPU-resident optimizer states
+
 References:
     - LISA: arxiv 2403.17919 (Layerwise Importance Sampled AdamW)
     - LOMO: arxiv 2306.09782 (Low-Memory Optimization)
@@ -17,21 +22,37 @@ References:
     - BitNet: arxiv 2402.17764 (1.58-bit LLMs)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.5.0"
 
+# Core (v0.4)
 from .quantize import FigQuantizer, FIG4Tensor
 from .linear import FigLinear
 from .model import FigModel
 from .trainer import FigTrainer, FigTrainingConfig
 from .tier import TrainingTier, select_tier
 
+# New (v0.5)
+from .figquant import FigQuantTensor, figquant_quantize, figquant_dequantize, measure_quality
+from .figkernel import (
+    FigRMSNorm, FigCrossEntropy, FigSwiGLU,
+    fig_fused_linear_lora, fig_fused_linear,
+    fig_chunked_cross_entropy,
+)
+from .figpipeline import FigPipeline, PipelineConfig
+
 __all__ = [
-    "FigQuantizer",
-    "FIG4Tensor",
+    # Core
+    "FigQuantizer", "FIG4Tensor",
     "FigLinear",
     "FigModel",
-    "FigTrainer",
-    "FigTrainingConfig",
-    "TrainingTier",
-    "select_tier",
+    "FigTrainer", "FigTrainingConfig",
+    "TrainingTier", "select_tier",
+    # FigQuant
+    "FigQuantTensor", "figquant_quantize", "figquant_dequantize", "measure_quality",
+    # FigKernel
+    "FigRMSNorm", "FigCrossEntropy", "FigSwiGLU",
+    "fig_fused_linear_lora", "fig_fused_linear",
+    "fig_chunked_cross_entropy",
+    # FigPipeline
+    "FigPipeline", "PipelineConfig",
 ]

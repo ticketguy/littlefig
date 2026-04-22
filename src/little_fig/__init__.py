@@ -58,7 +58,7 @@ def print_startup_banner(hw: dict):
     fig = """
   ╔══════════════════════════════════════════╗
   ║           🍐  L I T T L E  F I G        ║
-  ║     CPU-native LLM engine  v0.4.0       ║
+  ║     CPU-native LLM engine  v0.5.0       ║
   ║         Powered by Fig Engine           ║
   ╚══════════════════════════════════════════╝"""
     print(fig)
@@ -72,7 +72,7 @@ def print_startup_banner(hw: dict):
 
     print(f"  🔧 PyTorch      : {hw.get('torch_version', 'N/A')}")
     print(f"  🔧 Python       : {sys.version.split()[0]}")
-    print(f"  🔧 Backend      : Fig Engine (INT4 streaming)")
+    print(f"  🔧 Backend      : Fig Engine (FigQuant + FigKernel)")
     print()
 
 
@@ -84,12 +84,17 @@ def start():
     print_startup_banner(HW)
 
     try:
-        from .studio.app import run_studio
-        run_studio(hw=HW)
+        from .web.server import run_server
+        run_server()
     except ImportError as e:
-        print(f"❌ Could not load studio module: {e}")
-        print("   Install with: pip install -e '.[full]'")
-        sys.exit(1)
+        # Fallback to Gradio if FastAPI not installed
+        try:
+            from .studio.app import run_studio
+            run_studio(hw=HW)
+        except ImportError:
+            print(f"❌ Could not load UI: {e}")
+            print("   Install with: pip install -e '.[full]'")
+            sys.exit(1)
     except Exception as e:
         print(f"❌ Startup error: {e}")
         raise

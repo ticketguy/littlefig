@@ -1,411 +1,427 @@
 """
-Little Fig Studio — Main UI (v0.5)
-Four tabs: Chat · Dataset Builder · Eval · Merge
+Little Fig Studio — v0.6 Modern UI
 
-Modern Gradio 6.x UI with light/dark theme support.
-Uses Fig Engine for inference (no GGUF dependency).
-Supports any HuggingFace model ID.
+Gradio 6.x native:
+  - gr.Sidebar for model config
+  - gr.MultimodalTextbox for chat (text + images + files + voice)
+  - Dark/light theme toggle with anti-flash
+  - Free-text model input (HF ID or local path, no suggestions dropdown)
+  - Bubble chat layout with retry/undo/copy
+  - Tabs: Chat · Dataset Builder · Eval · Merge
 """
 
 import gradio as gr
 import os
 import time
-import json
-from typing import Optional, Iterator, Union
+from typing import Optional, Union
 
-
-# ── Suggested models (user can type any model ID) ────────────────────────────
-
-SUGGESTED_MODELS = [
-    "GPT-2 124M (testing, fast)",
-    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    "microsoft/phi-2",
-    "google/gemma-3-4b-it",
-    "meta-llama/Llama-3.2-1B-Instruct",
-    "Qwen/Qwen2.5-0.5B-Instruct",
-]
-
-# Auto-discover local GGUF files in ./models/ directory
-_models_dir = os.path.join(os.getcwd(), "models")
-if os.path.isdir(_models_dir):
-    import glob
-    for f in sorted(glob.glob(os.path.join(_models_dir, "*.gguf"))):
-        label = os.path.basename(f)
-        SUGGESTED_MODELS.insert(0, f)  # Local files at top
 
 # ── Global model state ────────────────────────────────────────────────────────
 
 _loaded_model = None
 _loaded_model_id = None
+_hw = None
 
 
-def _resolve_model_id(model_name: str) -> str:
-    """Resolve display name to HF model ID."""
-    if model_name.startswith("GPT-2"):
-        return "gpt2"
-    if "/" in model_name or model_name in ("gpt2",):
-        return model_name
-    return model_name
-
-
-def _load_model(model_name: str, hw: dict):
+def _load_model(model_id: str):
     """Load model, caching to avoid reloads."""
     global _loaded_model, _loaded_model_id
-
-    model_id = _resolve_model_id(model_name)
-
-    if _loaded_model_id == model_id and _loaded_model is not None:
+    if not model_id or not model_id.strip():
+        raise ValueError("No model specified")
+    model_id = model_id.strip()
+    if model_id == _loaded_model_id and _loaded_model is not None:
         return _loaded_model
-
     from little_fig.model import FigLanguageModel
-    model = FigLanguageModel.from_pretrained(model_id, hw=hw)
-
+    model = FigLanguageModel.from_pretrained(model_id, hw=_hw)
     _loaded_model = model
     _loaded_model_id = model_id
     return model
 
 
+def _unload_model():
+    global _loaded_model, _loaded_model_id
+    _loaded_model = None
+    _loaded_model_id = None
+
+
 def get_current_model():
-    """Returns loaded model or None. Used by eval tab."""
     return _loaded_model
 
 
-# ── Gradio 6.x content helpers ────────────────────────────────────────────────
+# ── Gradio 6.x content helpers ───────────────────────────────────────────────
 
 def _extract_text(content) -> str:
-    """Normalise Gradio 6.x content (list of parts) or plain str → str."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         parts = []
-        for part in content:
-            if isinstance(part, str):
-                parts.append(part)
-            elif isinstance(part, dict) and part.get("type") == "text":
-                parts.append(part.get("text", ""))
+        for p in content:
+            if isinstance(p, str):
+                parts.append(p)
+            elif isinstance(p, dict):
+                if p.get("type") == "text":
+                    parts.append(p.get("text", ""))
         return " ".join(parts)
     return str(content)
 
 
 def _normalise_history(history: list) -> list:
-    """Return history with every content field as a plain string."""
     return [
-        {"role": msg["role"], "content": _extract_text(msg.get("content", ""))}
-        for msg in history
+        {"role": m["role"], "content": _extract_text(m.get("content", ""))}
+        for m in history
     ]
 
 
-# ── Chat logic ────────────────────────────────────────────────────────────────
+# ── JS for dark/light toggle ─────────────────────────────────────────────────
 
-def respond(message: Union[str, list], history: list, model_name: str,
-            max_tokens: int, temperature: float, system_prompt: str, hw: dict):
-    """Chat response generator — streaming, messages format."""
-    message = _extract_text(message)
-    history = _normalise_history(history)
+DARK_TOGGLE_JS = """
+() => {
+    const html = document.documentElement;
+    const isDark = html.classList.contains('dark');
+    if (isDark) {
+        html.classList.remove('dark');
+        localStorage.setItem('gradio-theme', 'light');
+    } else {
+        html.classList.add('dark');
+        localStorage.setItem('gradio-theme', 'dark');
+    }
+    return isDark ? '☀️ Light' : '🌙 Dark';
+}
+"""
 
-    if not message.strip():
-        yield ""
-        return
+ANTI_FLASH_HEAD = """
+<script>
+(function(){
+    let t = localStorage.getItem('gradio-theme');
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    if (t === 'dark') document.documentElement.classList.add('dark');
+})();
+</script>
+"""
 
-    try:
-        model = _load_model(model_name, hw)
-    except Exception as e:
-        yield f"❌ **Model load error**\n\n```\n{e}\n```"
-        return
+# ── CSS ───────────────────────────────────────────────────────────────────────
 
-    model.config.max_new_tokens = max_tokens
-    model.config.temperature = temperature
-
-    prompt = model.apply_chat_template(message, history)
-    if system_prompt.strip():
-        prompt = f"System: {system_prompt}\n\n" + prompt
-
-    start = time.time()
-    full = ""
-    try:
-        for chunk in model.stream(prompt):
-            full += chunk
-            yield full
-        elapsed = time.time() - start
-        print(f"   ✓ ~{len(full.split())} words in {elapsed:.1f}s")
-    except Exception as e:
-        yield f"{full}\n\n❌ {e}"
-
-
-# ── Themes ────────────────────────────────────────────────────────────────────
-
-def _make_light_theme():
-    """Clean white background, green accent."""
-    return gr.themes.Base(
-        primary_hue=gr.themes.colors.emerald,
-        secondary_hue=gr.themes.colors.green,
-        neutral_hue=gr.themes.colors.gray,
-        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
-        font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "monospace"],
-    )
-
-
-def _make_dark_theme():
-    """Dark background, green accent."""
-    return gr.themes.Base(
-        primary_hue=gr.themes.colors.emerald,
-        secondary_hue=gr.themes.colors.green,
-        neutral_hue=gr.themes.colors.slate,
-        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
-        font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "monospace"],
-    )
-
-
-_LIGHT_CSS = """
-/* ── Light theme: white bg, green accent ─────────────────────── */
+CSS = """
+/* ── Custom variables ─────────────────────────────────────────── */
 :root, .light {
-    --fig-bg: #ffffff;
-    --fig-surface: #f8faf9;
-    --fig-border: #e2e8f0;
-    --fig-text: #1a202c;
-    --fig-text-muted: #64748b;
     --fig-accent: #059669;
-    --fig-accent-light: #d1fae5;
-    --fig-accent-glow: #10b981;
+    --fig-accent-soft: #d1fae5;
+    --fig-muted: #64748b;
 }
 .dark {
-    --fig-bg: #0f1117;
-    --fig-surface: #1a1d27;
-    --fig-border: #2d3348;
-    --fig-text: #e2e8f0;
-    --fig-text-muted: #94a3b8;
     --fig-accent: #10b981;
-    --fig-accent-light: #064e3b;
-    --fig-accent-glow: #34d399;
+    --fig-accent-soft: #064e3b;
+    --fig-muted: #94a3b8;
 }
 
-/* Header */
-.fig-header {
-    text-align: center;
-    padding: 1.5rem 0 0.5rem;
+/* Logo */
+.fig-logo {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0.2rem 0 0.8rem 0;
 }
-.fig-header h1 {
-    font-size: 2rem;
-    font-weight: 800;
+.fig-logo h1 {
+    font-size: 1.35rem; font-weight: 800;
+    color: var(--fig-accent); margin: 0; letter-spacing: -0.02em;
+}
+.fig-logo span { font-size: 1.5rem; }
+.fig-version {
+    font-size: 0.65rem; color: var(--fig-muted);
+    font-weight: 500; margin-top: 2px;
+}
+
+/* Status pill */
+.status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 20px;
+    font-size: 0.75rem; font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+}
+.status-pill.ready {
+    background: var(--fig-accent-soft);
     color: var(--fig-accent);
-    margin: 0;
-    letter-spacing: -0.02em;
 }
-.fig-header .subtitle {
-    color: var(--fig-text-muted);
-    font-size: 0.85rem;
-    margin-top: 0.25rem;
-    font-weight: 400;
+.status-pill.empty {
+    background: #fef3c7; color: #92400e;
+}
+.dark .status-pill.empty {
+    background: #422006; color: #fbbf24;
 }
 
 /* Hardware badge */
 .hw-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--fig-accent-light);
-    border: 1px solid var(--fig-accent);
-    border-radius: 8px;
-    padding: 8px 14px;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--fig-accent-soft);
+    border-radius: 8px; padding: 6px 12px;
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.75rem;
-    color: var(--fig-accent);
-    font-weight: 500;
-}
-.dark .hw-badge {
-    background: var(--fig-accent-light);
-    color: var(--fig-accent-glow);
+    font-size: 0.7rem; color: var(--fig-accent); font-weight: 500;
 }
 
-/* Sidebar section headers */
-.sidebar-label {
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fig-text-muted);
-    margin-top: 1rem;
-    margin-bottom: 0.25rem;
+/* Section label */
+.section-label {
+    font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--fig-muted);
+    margin: 0.8rem 0 0.15rem 0; padding: 0;
 }
 
 /* Hide Gradio footer */
 footer { display: none !important; }
 
-/* Smoother chatbot */
-.chatbot { border-radius: 12px !important; }
-
-/* Tab styling */
-button.tab-nav { font-weight: 600 !important; }
-
-/* Primary button */
-.primary {
-    background: var(--fig-accent) !important;
-    border: none !important;
-}
+/* Chatbot tweaks */
+.chatbot .message-wrap { border-radius: 16px !important; }
 """
 
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── Theme ─────────────────────────────────────────────────────────────────────
+
+def _make_theme():
+    return gr.themes.Soft(
+        primary_hue=gr.themes.colors.emerald,
+        secondary_hue=gr.themes.colors.teal,
+        neutral_hue=gr.themes.colors.slate,
+        font=[gr.themes.GoogleFont("Inter"), "system-ui", "sans-serif"],
+        font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "monospace"],
+        radius_size="lg",
+    )
+
+
+# ── UI builder ────────────────────────────────────────────────────────────────
 
 def run_studio(hw: Optional[dict] = None):
+    global _hw
     if hw is None:
         from little_fig import HW
         hw = HW
+    _hw = hw
 
     if hw.get("gpu_available"):
-        hw_line = f"⚡ GPU: {hw['gpu_name']} ({hw['gpu_vram_gb']}GB)"
+        hw_line = f"⚡ {hw['gpu_name']} · {hw['gpu_vram_gb']}GB"
     else:
         hw_line = f"💻 CPU · {hw['cpu_cores']} cores · {hw.get('ram_available_gb', '?')}GB free"
 
-    theme = _make_light_theme()
-    css = _LIGHT_CSS
+    with gr.Blocks(title="Little Fig", fill_height=True) as demo:
 
-    with gr.Blocks(title="🍐 Little Fig") as demo:
+        # ═══════════════════════════════════════════════════════════════════
+        # SIDEBAR
+        # ═══════════════════════════════════════════════════════════════════
+        with gr.Sidebar(position="left"):
 
-        # ── Header ────────────────────────────────────────────────────────
-        gr.HTML("""
-        <div class="fig-header">
-            <h1>🍐 Little Fig</h1>
-            <p class="subtitle">CPU-native LLM engine &nbsp;·&nbsp; v0.4 &nbsp;·&nbsp; Powered by Fig Engine</p>
-        </div>
-        """)
+            # Logo
+            gr.HTML("""
+            <div class="fig-logo">
+                <span>🍐</span>
+                <div>
+                    <h1>Little Fig</h1>
+                    <div class="fig-version">v0.5 · Fig Engine</div>
+                </div>
+            </div>
+            """)
 
-        # ── Tab 1: Chat ──────────────────────────────────────────────────
+            # ── Model ─────────────────────────────────────────────────────
+            gr.HTML('<p class="section-label">Model</p>')
+            model_input = gr.Textbox(
+                placeholder="HuggingFace ID or local path…",
+                show_label=False,
+                info="e.g. Qwen/Qwen2.5-0.5B-Instruct or ./models/my.gguf",
+                lines=1,
+            )
+            with gr.Row():
+                load_btn = gr.Button("Load", variant="primary", scale=2, size="sm")
+                unload_btn = gr.Button("Unload", scale=1, size="sm")
+            model_status = gr.HTML('<span class="status-pill empty">No model loaded</span>')
+
+            # ── Parameters ────────────────────────────────────────────────
+            with gr.Accordion("Parameters", open=True):
+                temperature = gr.Slider(0.01, 2.0, value=0.7, step=0.05, label="Temperature")
+                max_tokens = gr.Slider(64, 4096, value=512, step=64, label="Max tokens")
+                top_p = gr.Slider(0.01, 1.0, value=0.9, step=0.05, label="Top-P")
+
+            # ── System Prompt ─────────────────────────────────────────────
+            with gr.Accordion("System Prompt", open=False):
+                system_prompt = gr.Textbox(
+                    value="You are a helpful, concise AI assistant.",
+                    show_label=False,
+                    lines=3,
+                )
+
+            # ── Hardware ──────────────────────────────────────────────────
+            gr.HTML(f'<p class="section-label">Hardware</p>')
+            gr.HTML(f'<div class="hw-badge">{hw_line}</div>')
+
+            # ── Theme toggle ──────────────────────────────────────────────
+            theme_btn = gr.Button("🌙 Dark", size="sm", variant="secondary")
+
+        # ═══════════════════════════════════════════════════════════════════
+        # MAIN AREA — Tabs
+        # ═══════════════════════════════════════════════════════════════════
+
         with gr.Tab("💬 Chat"):
-            with gr.Row(equal_height=True):
-                # ── Main chat area ────────────────────────────────────────
-                with gr.Column(scale=3):
-                    chatbot = gr.Chatbot(
-                        show_label=False,
-                        height=520,
-                        placeholder=(
-                            "<center><br><br>"
-                            "<strong style='font-size:1.1rem;color:var(--fig-accent)'>🍐 Ready to chat</strong><br>"
-                            "<span style='color:var(--fig-text-muted);font-size:0.85rem'>"
-                            "Pick a model in the sidebar, then type a message.<br>"
-                            "Small models (GPT-2, Qwen 0.5B) load fastest."
-                            "</span></center>"
-                        ),
-                    )
-                    with gr.Row():
-                        msg_input = gr.Textbox(
-                            placeholder="Type a message…",
-                            show_label=False,
-                            scale=6,
-                            autofocus=True,
-                            lines=1,
-                            container=False,
-                        )
-                        send_btn = gr.Button("Send", variant="primary", scale=1, min_width=80)
-                        clear_btn = gr.Button("Clear", scale=1, min_width=80)
+            chatbot = gr.Chatbot(
+                show_label=False,
+                buttons=["copy", "copy_all"],
+                layout="bubble",
+                resizable=True,
+                height=520,
+                placeholder=(
+                    "<center style='padding:3rem 0'>"
+                    "<p style='font-size:2.5rem;margin:0'>🍐</p>"
+                    "<p style='font-size:1.1rem;font-weight:700;color:var(--fig-accent);margin:0.5rem 0 0.3rem'>Little Fig</p>"
+                    "<p style='color:var(--fig-muted);font-size:0.85rem;max-width:300px;margin:0 auto'>"
+                    "Type a HuggingFace model ID in the sidebar and click <b>Load</b>, then start chatting."
+                    "</p></center>"
+                ),
+            )
+            chat_input = gr.MultimodalTextbox(
+                interactive=True,
+                file_count="multiple",
+                placeholder="Message Little Fig… or attach files",
+                show_label=False,
+                sources=["microphone", "upload"],
+                file_types=["image", "audio", ".pdf", ".txt", ".py", ".json", ".csv"],
+            )
 
-                # ── Sidebar ───────────────────────────────────────────────
-                with gr.Column(scale=1, min_width=260):
-                    gr.HTML('<div class="sidebar-label">Model</div>')
-                    model_selector = gr.Dropdown(
-                        choices=SUGGESTED_MODELS,
-                        value=SUGGESTED_MODELS[0],
-                        label="Select or type any HF model ID",
-                        allow_custom_value=True,
-                        interactive=True,
-                    )
-                    model_hint = gr.Markdown(_model_hint(SUGGESTED_MODELS[0]))
-
-                    gr.HTML('<div class="sidebar-label">Generation</div>')
-                    max_tokens_sl = gr.Slider(
-                        64, 2048, 512, step=64,
-                        label="Max tokens",
-                    )
-                    temperature_sl = gr.Slider(
-                        0.1, 2.0, 0.7, step=0.05,
-                        label="Temperature",
-                    )
-
-                    gr.HTML('<div class="sidebar-label">System Prompt</div>')
-                    system_prompt_box = gr.Textbox(
-                        value="You are a helpful, concise AI assistant.",
-                        show_label=False,
-                        lines=3,
-                    )
-
-                    gr.HTML('<div class="sidebar-label">Hardware</div>')
-                    gr.HTML(f'<div class="hw-badge">{hw_line}</div>')
-
-            # ── Chat logic wiring ─────────────────────────────────────────
-            def user_submit(message, history):
-                if not message.strip():
-                    return "", history
-                history = history + [{"role": "user", "content": message}]
-                return "", history
-
-            def bot_respond(history, model_name, max_tok, temp, sys_prompt):
-                if not history or history[-1]["role"] != "user":
-                    yield history
-                    return
-                user_msg = _extract_text(history[-1]["content"])
-                context = history[:-1]
-                history = history + [{"role": "assistant", "content": ""}]
-                for partial in respond(user_msg, context, model_name, max_tok, temp, sys_prompt, hw):
-                    history[-1]["content"] = partial
-                    yield history
-
-            model_selector.change(_model_hint, model_selector, model_hint)
-
-            sub = dict(fn=user_submit, inputs=[msg_input, chatbot], outputs=[msg_input, chatbot], queue=False)
-            then = dict(fn=bot_respond, inputs=[chatbot, model_selector, max_tokens_sl, temperature_sl, system_prompt_box], outputs=[chatbot])
-            msg_input.submit(**sub).then(**then)
-            send_btn.click(**sub).then(**then)
-            clear_btn.click(lambda: [], outputs=[chatbot])
-
-        # ── Tab 2: Dataset Builder ────────────────────────────────────────
+        # ── Other tabs ────────────────────────────────────────────────────
         try:
             from little_fig.studio.dataset_builder import build_dataset_tab
             build_dataset_tab()
         except Exception as e:
             with gr.Tab("📂 Dataset Builder"):
-                gr.Markdown(f"⚠ Could not load dataset builder: {e}")
+                gr.Markdown(f"⚠ Could not load: {e}")
 
-        # ── Tab 3: Eval ───────────────────────────────────────────────────
         try:
             from little_fig.studio.eval_tools import build_eval_tab
             build_eval_tab(get_current_model)
         except Exception as e:
             with gr.Tab("🧪 Eval"):
-                gr.Markdown(f"⚠ Could not load eval tools: {e}")
+                gr.Markdown(f"⚠ Could not load: {e}")
 
-        # ── Tab 4: Merge ──────────────────────────────────────────────────
         try:
             from little_fig.studio.merge_tools import build_merge_tab
             build_merge_tab()
         except Exception as e:
             with gr.Tab("🔀 Merge"):
-                gr.Markdown(f"⚠ Could not load merge tools: {e}")
+                gr.Markdown(f"⚠ Could not load: {e}")
 
+        # ═══════════════════════════════════════════════════════════════════
+        # EVENT WIRING
+        # ═══════════════════════════════════════════════════════════════════
+
+        # ── Theme toggle ──────────────────────────────────────────────────
+        theme_btn.click(fn=None, js=DARK_TOGGLE_JS, outputs=[theme_btn])
+
+        # ── Model load/unload ─────────────────────────────────────────────
+        def handle_load(model_id):
+            if not model_id or not model_id.strip():
+                return '<span class="status-pill empty">Enter a model ID first</span>'
+            try:
+                _load_model(model_id.strip())
+                name = model_id.strip().split("/")[-1]
+                return f'<span class="status-pill ready">✓ {name}</span>'
+            except Exception as e:
+                return f'<span class="status-pill empty">❌ {str(e)[:80]}</span>'
+
+        def handle_unload():
+            _unload_model()
+            return '<span class="status-pill empty">No model loaded</span>'
+
+        load_btn.click(handle_load, [model_input], [model_status])
+        unload_btn.click(handle_unload, [], [model_status])
+
+        # ── Chat: multimodal input → history → stream response ────────────
+        def add_message(history, message):
+            """Add user message (text + files) to history."""
+            # message is {"text": "...", "files": [...]}
+            text = message.get("text", "").strip() if isinstance(message, dict) else str(message).strip()
+            files = message.get("files", []) if isinstance(message, dict) else []
+
+            if not text and not files:
+                return history, gr.MultimodalTextbox(value=None, interactive=True)
+
+            # Add file messages first
+            for f in files:
+                # f is a filepath string
+                history = history + [{"role": "user", "content": gr.File(f)}]
+
+            # Add text message
+            if text:
+                history = history + [{"role": "user", "content": text}]
+
+            return history, gr.MultimodalTextbox(value=None, interactive=False)
+
+        def bot_respond(history, model_id, temp, max_tok, tp, sys_prompt):
+            """Stream assistant response."""
+            if not history:
+                yield history
+                return
+
+            # Find last user text message
+            user_msg = ""
+            for m in reversed(history):
+                if m["role"] == "user" and isinstance(m.get("content"), str):
+                    user_msg = _extract_text(m["content"])
+                    break
+
+            if not user_msg:
+                yield history
+                return
+
+            if _loaded_model is None:
+                history = history + [{"role": "assistant", "content": "⚠️ No model loaded. Enter a model ID in the sidebar and click **Load**."}]
+                yield history
+                return
+
+            _loaded_model.config.max_new_tokens = int(max_tok)
+            _loaded_model.config.temperature = float(temp)
+
+            context = _normalise_history(history[:-1]) if len(history) > 1 else []
+            prompt = _loaded_model.apply_chat_template(user_msg, context)
+            if sys_prompt and sys_prompt.strip():
+                prompt = f"System: {sys_prompt}\n\n" + prompt
+
+            history = history + [{"role": "assistant", "content": ""}]
+            start = time.time()
+            full = ""
+            try:
+                for chunk in _loaded_model.stream(prompt):
+                    full += chunk
+                    history[-1]["content"] = full
+                    yield history
+                elapsed = time.time() - start
+                print(f"   ✓ ~{len(full.split())} words in {elapsed:.1f}s")
+            except Exception as e:
+                history[-1]["content"] = f"{full}\n\n❌ {e}"
+                yield history
+
+        def enable_input():
+            return gr.MultimodalTextbox(interactive=True)
+
+        chat_msg = chat_input.submit(
+            add_message,
+            [chatbot, chat_input],
+            [chatbot, chat_input],
+        )
+        bot_msg = chat_msg.then(
+            bot_respond,
+            [chatbot, model_input, temperature, max_tokens, top_p, system_prompt],
+            [chatbot],
+        )
+        bot_msg.then(enable_input, None, [chat_input])
+
+        # Retry / undo
+        chatbot.retry(
+            bot_respond,
+            [chatbot, model_input, temperature, max_tokens, top_p, system_prompt],
+            [chatbot],
+        )
+        chatbot.undo(lambda h: (h, gr.MultimodalTextbox(interactive=True)), [chatbot], [chatbot, chat_input])
+
+    # ── Launch ────────────────────────────────────────────────────────────
     print("🍐 Little Fig Studio → http://0.0.0.0:8888")
     demo.queue()
     demo.launch(
         server_name="0.0.0.0",
         server_port=8888,
         show_error=True,
-        theme=theme,
-        css=css,
+        theme=_make_theme(),
+        css=CSS,
+        head=ANTI_FLASH_HEAD,
     )
-
-
-def _model_hint(model_name: str) -> str:
-    """Show RAM hints for known models."""
-    hints = {
-        "gpt-2":       ("~500 MB", "emerald", "Testing only · Fast"),
-        "gpt2":        ("~500 MB", "emerald", "Testing only · Fast"),
-        "tinyllama":   ("~2.2 GB", "emerald", "Good for CPU"),
-        "qwen2.5-0.5b":("~1 GB", "emerald",  "Very fast on CPU"),
-        "phi-2":       ("~5.5 GB", "amber",   "Moderate RAM"),
-        "gemma-3-4b":  ("~9 GB", "orange",    "Large · Needs RAM"),
-        "gemma-4":     ("~5 GB", "orange",     "Large · Needs RAM"),
-        "llama-3.2-1b":("~2.5 GB", "emerald", "Good for CPU"),
-    }
-    name_lower = model_name.lower()
-    for key, (size, color, note) in hints.items():
-        if key in name_lower:
-            return f"<span style='font-size:0.78rem;color:var(--fig-text-muted)'>{size} · {note}</span>"
-    return "<span style='font-size:0.78rem;color:var(--fig-text-muted)'>HuggingFace model · Auto-detects loading strategy</span>"

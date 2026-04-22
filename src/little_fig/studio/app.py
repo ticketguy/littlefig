@@ -25,6 +25,14 @@ SUGGESTED_MODELS = [
     "Qwen/Qwen2.5-0.5B-Instruct",
 ]
 
+# Auto-discover local GGUF files in ./models/ directory
+_models_dir = os.path.join(os.getcwd(), "models")
+if os.path.isdir(_models_dir):
+    import glob
+    for f in sorted(glob.glob(os.path.join(_models_dir, "*.gguf"))):
+        label = os.path.basename(f)
+        SUGGESTED_MODELS.insert(0, f)  # Local files at top
+
 # ── Global model state ────────────────────────────────────────────────────────
 
 _loaded_model = None

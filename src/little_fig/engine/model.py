@@ -348,6 +348,48 @@ class FigModel(nn.Module):
         
         print(f"🍐 ✓ Merged model saved: {save_dir}")
     
+    def push_to_hub(
+        self,
+        repo_id: str,
+        commit_message: str = "Upload model trained with Fig Engine",
+        private: bool = False,
+        merge_before_push: bool = True,
+    ):
+        """
+        Push the trained model to HuggingFace Hub.
+        
+        Args:
+            repo_id: HuggingFace repo ID (e.g., "username/my-model")
+            commit_message: Commit message
+            private: Whether to make the repo private
+            merge_before_push: If True, merges LoRA into base weights first
+        """
+        import tempfile
+        
+        if merge_before_push:
+            print(f"🍐 Merging LoRA and pushing to Hub: {repo_id}")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                self.merge_and_export(tmpdir)
+                
+                from transformers import AutoModelForCausalLM
+                merged = AutoModelForCausalLM.from_pretrained(tmpdir)
+                merged.push_to_hub(repo_id, commit_message=commit_message, private=private)
+                
+                if self.tokenizer:
+                    self.tokenizer.push_to_hub(repo_id, commit_message=commit_message)
+        else:
+            # Push adapter only
+            print(f"🍐 Pushing adapter to Hub: {repo_id}")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                self.save_adapter(tmpdir)
+                from huggingface_hub import HfApi
+                api = HfApi()
+                api.create_repo(repo_id, exist_ok=True, private=private)
+                api.upload_folder(folder_path=tmpdir, repo_id=repo_id,
+                                  commit_message=commit_message)
+        
+        print(f"🍐 ✓ Pushed to https://huggingface.co/{repo_id}")
+    
     def print_trainable_summary(self):
         """Print a summary of trainable vs frozen parameters."""
         trainable = 0

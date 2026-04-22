@@ -33,10 +33,10 @@ train = [
     "datasets>=2.18.0,<4.0.0",
 ]
 
-# Full install (inference + training + UI)
+# Full install (inference + training + memory)
 full = [
     "datasets>=2.18.0,<4.0.0",
-    "gradio>=4.0.0,<7.0.0",
+    "embers-diaries",
 ]
 
 # Legacy fine-tuning (v0.3 trainer, uses PEFT + HF Trainer)

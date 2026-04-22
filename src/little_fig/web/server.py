@@ -223,6 +223,62 @@ async def delete_chat(chat_id: str):
     return {"status": "deleted"}
 
 
+# ── Ember Memory ──────────────────────────────────────────────────────────────
+
+@app.post("/api/ember/generate-training-data")
+async def generate_ember_training_data(body: dict = {}):
+    """Generate memory-operation training data from Ember's cognitive modules."""
+    n = body.get("n_examples", 500)
+    _log(f"Generating {n} Ember memory training examples…")
+    try:
+        from little_fig.engine.ember_integration import EmberTrainingDataGenerator
+        gen = EmberTrainingDataGenerator()
+        output_path = str(Path(os.getcwd()) / "data" / "ember_memory_train.jsonl")
+        Path(output_path).parent.mkdir(exist_ok=True)
+        gen.generate_jsonl(n_examples=n, path=output_path)
+        _log(f"✓ Generated {n} examples → {output_path}")
+        return {"status": "generated", "path": output_path, "n_examples": n}
+    except Exception as e:
+        _log(f"✗ Generation failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/ember/status")
+async def ember_status():
+    """Check if Ember's Diaries is available."""
+    try:
+        from embers import EmberDB
+        return {"available": True, "version": "installed"}
+    except ImportError:
+        return {"available": False, "install": "pip install embers-diaries"}
+
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+
+@app.get("/api/checkpoints")
+async def list_checkpoints():
+    """List saved training checkpoints."""
+    ckpt_dir = Path(os.getcwd()) / "checkpoints"
+    if not ckpt_dir.exists():
+        return {"checkpoints": []}
+    checkpoints = []
+    for d in sorted(ckpt_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if d.is_dir():
+            meta_path = d / "training_state.json"
+            meta = {}
+            if meta_path.exists():
+                try: meta = json.loads(meta_path.read_text())
+                except: pass
+            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            checkpoints.append({
+                "name": d.name, "path": str(d),
+                "size_human": _human_size(size),
+                "step": meta.get("step"), "tier": meta.get("tier"),
+                "created": datetime.fromtimestamp(d.stat().st_mtime).isoformat(),
+            })
+    return {"checkpoints": checkpoints}
+
+
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
 @app.get("/api/logs")

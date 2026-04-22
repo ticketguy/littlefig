@@ -74,6 +74,10 @@ pre{margin:.5rem 0;border-radius:.5rem;overflow-x:auto}
   <nav class="flex items-center gap-0.5 px-3 border-b border-zinc-200 dark:border-zinc-800/60 bg-white dark:bg-[#09090b] shrink-0">
     <button class="tab-a tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="chat">💬 Chat</button>
     <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="train">🏋️ Training</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="ember">🔥 Ember</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="arena">⚔️ FigSpace</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="bench">📊 Bench</button>
+    <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="ckpt">💾 Checkpoints</button>
     <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="term">🖥 Terminal</button>
     <button class="tab px-3 py-2 text-[0.7rem] font-semibold border-b-2 border-transparent text-zinc-400" data-t="docs">📖 Docs</button>
   </nav>
@@ -111,6 +115,67 @@ pre{margin:.5rem 0;border-radius:.5rem;overflow-x:auto}
           <div class="p-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 text-center"><p class="text-lg">🔥</p><p class="text-[0.65rem] font-bold text-zinc-400">Ember Memory</p><p class="text-[0.55rem] text-zinc-500">v0.6</p></div>
         </div>
         <div class="p-3 rounded-xl bg-fig-950/50 border border-fig-900/30"><p class="text-xs text-fig-400 font-mono">from little_fig.engine import FigTrainer, FigTrainingConfig<br>trainer = FigTrainer(model, FigTrainingConfig(num_epochs=3))<br>trainer.load_dataset("tatsu-lab/alpaca")<br>trainer.train()</p></div>
+      </div>
+    </div>
+
+    <!-- EMBER MEMORY -->
+    <div id="p-ember" class="pane absolute inset-0 hidden overflow-y-auto p-6">
+      <div class="max-w-4xl mx-auto space-y-5">
+        <div><h2 class="text-base font-bold text-orange-500">🔥 Ember Memory Training</h2><p class="text-xs text-zinc-500 mt-0.5">Train your LLM to have cognitive memory embedded in its weights — not RAG, not vector search. The model <em>itself</em> learns to store, recall, consolidate, and forget.</p></div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">📝 Store</div><p class="text-[0.65rem] text-zinc-500 mt-1">Model learns WHEN and WHAT to persist. Identifies important facts, user preferences, deadlines.</p></div>
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">🔍 Recall</div><p class="text-[0.65rem] text-zinc-500 mt-1">Model learns to search its memory when a question relates to past context. Relevance-based retrieval.</p></div>
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">🧠 Consolidate</div><p class="text-[0.65rem] text-zinc-500 mt-1">Sensory → short-term → long-term. Merges related memories, boosts confidence, reduces decay.</p></div>
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">💨 Forget</div><p class="text-[0.65rem] text-zinc-500 mt-1">Ebbinghaus decay curves. Low-confidence memories flagged for reinforcement or deprecation.</p></div>
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">⚡ Conflict</div><p class="text-[0.65rem] text-zinc-500 mt-1">Detects contradictions between memories. Prevents hallucination propagation (inspired by HaluMem).</p></div>
+          <div class="p-3 rounded-xl border border-orange-900/30 bg-orange-950/20"><div class="text-sm font-bold text-orange-400 flex items-center gap-2">🪞 Reflect</div><p class="text-[0.65rem] text-zinc-500 mt-1">Self-reflection generates insights from stored memories. Discovers patterns and new connections.</p></div>
+        </div>
+        <div class="p-4 rounded-xl border border-zinc-800 bg-zinc-900/50 space-y-3">
+          <h3 class="text-sm font-bold text-orange-400">Generate Training Data</h3>
+          <p class="text-[0.65rem] text-zinc-500">Creates synthetic memory-operation examples using Ember's cognitive modules. The data teaches the model to use special &lt;|mem_*|&gt; tokens for memory operations.</p>
+          <div class="flex items-center gap-3">
+            <input id="ember-n" type="number" value="500" min="100" max="10000" step="100" class="w-24 px-2 py-1 text-xs rounded border border-zinc-700 bg-black text-zinc-300 outline-none">
+            <span class="text-[0.6rem] text-zinc-500">examples</span>
+            <button onclick="genEmberData()" id="ember-gen-btn" class="px-4 py-1.5 text-xs font-bold rounded-lg bg-orange-600 hover:bg-orange-700 text-white transition">Generate</button>
+          </div>
+          <div id="ember-result" class="text-[0.65rem] font-mono text-zinc-500"></div>
+        </div>
+        <div class="p-3 rounded-xl bg-zinc-900/30 border border-zinc-800"><p class="text-[0.65rem] text-zinc-500">Powered by <a href="https://github.com/ticketguy/embers-diaries" class="text-orange-400 underline">Ember's Diaries</a> — a cognitive database engine where nothing is ever deleted. Every state that ever existed is preserved.</p></div>
+      </div>
+    </div>
+
+    <!-- FIGSPACE ARENA -->
+    <div id="p-arena" class="pane absolute inset-0 hidden overflow-y-auto p-6">
+      <div class="max-w-4xl mx-auto space-y-5">
+        <div><h2 class="text-base font-bold text-purple-400">⚔️ FigSpace Arena</h2><p class="text-xs text-zinc-500 mt-0.5">Compare models head-to-head. Same prompt, side-by-side responses. Find out which model performs best for your use case.</p></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-2"><span class="text-[0.6rem] font-bold uppercase text-zinc-500">Model A</span><input type="text" placeholder="Model ID…" class="w-full px-2 py-1.5 text-xs rounded border border-zinc-700 bg-black text-zinc-300 outline-none"><div class="h-48 rounded-lg bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-600 flex items-center justify-center">Response will appear here</div></div>
+          <div class="p-4 rounded-xl border border-zinc-800 bg-zinc-900/30 space-y-2"><span class="text-[0.6rem] font-bold uppercase text-zinc-500">Model B</span><input type="text" placeholder="Model ID…" class="w-full px-2 py-1.5 text-xs rounded border border-zinc-700 bg-black text-zinc-300 outline-none"><div class="h-48 rounded-lg bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-600 flex items-center justify-center">Response will appear here</div></div>
+        </div>
+        <div class="text-center"><textarea placeholder="Enter prompt to compare…" rows="2" class="w-full max-w-xl mx-auto px-3 py-2 text-sm rounded-xl border border-zinc-700 bg-black text-zinc-300 outline-none resize-none"></textarea><br><button class="mt-2 px-6 py-2 text-xs font-bold rounded-lg bg-purple-600 hover:bg-purple-700 text-white transition">⚔️ Battle</button></div>
+        <div class="text-center text-[0.6rem] text-zinc-600">Full arena with ELO ratings, blind voting, and leaderboard — coming in v0.6</div>
+      </div>
+    </div>
+
+    <!-- BENCHMARKS -->
+    <div id="p-bench" class="pane absolute inset-0 hidden overflow-y-auto p-6">
+      <div class="max-w-4xl mx-auto space-y-5">
+        <div><h2 class="text-base font-bold text-cyan-400">📊 Benchmarks</h2><p class="text-xs text-zinc-500 mt-0.5">Measure model performance across standard evaluation suites.</p></div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="p-3 rounded-xl border border-zinc-800 bg-zinc-900/30"><h3 class="text-xs font-bold text-cyan-400">FigQuant Quality</h3><div class="mt-2 space-y-1 text-[0.65rem] font-mono text-zinc-500"><div class="flex justify-between"><span>Cosine Similarity</span><span class="text-cyan-400">0.9955</span></div><div class="flex justify-between"><span>MSE</span><span class="text-cyan-400">0.0090</span></div><div class="flex justify-between"><span>SNR</span><span class="text-cyan-400">20.5 dB</span></div><div class="flex justify-between"><span>Bits/param</span><span class="text-cyan-400">4.31</span></div></div></div>
+          <div class="p-3 rounded-xl border border-zinc-800 bg-zinc-900/30"><h3 class="text-xs font-bold text-cyan-400">FigKernel Speed</h3><div class="mt-2 space-y-1 text-[0.65rem] font-mono text-zinc-500"><div class="flex justify-between"><span>RMSNorm</span><span class="text-cyan-400">2.95× faster</span></div><div class="flex justify-between"><span>FigLinear (fast)</span><span class="text-cyan-400">6.55ms</span></div><div class="flex justify-between"><span>FigLinear (lowram)</span><span class="text-cyan-400">8.11ms</span></div><div class="flex justify-between"><span>nn.Linear baseline</span><span class="text-zinc-400">4.60ms</span></div></div></div>
+          <div class="p-3 rounded-xl border border-zinc-800 bg-zinc-900/30"><h3 class="text-xs font-bold text-cyan-400">Memory Usage (1.1B)</h3><div class="mt-2 space-y-1 text-[0.65rem] font-mono text-zinc-500"><div class="flex justify-between"><span>Standard FP32</span><span class="text-red-400">26.6 GB</span></div><div class="flex justify-between"><span>Fig Tier 1 (LoRA)</span><span class="text-cyan-400">~400 MB</span></div><div class="flex justify-between"><span>Fig Tier 2 (LISA)</span><span class="text-cyan-400">~900 MB</span></div><div class="flex justify-between"><span>Compression</span><span class="text-cyan-400">7.4×</span></div></div></div>
+          <div class="p-3 rounded-xl border border-zinc-800 bg-zinc-900/30"><h3 class="text-xs font-bold text-cyan-400">vs Other Tools</h3><div class="mt-2 space-y-1 text-[0.65rem] font-mono text-zinc-500"><div class="flex justify-between"><span>Unsloth</span><span class="text-zinc-400">GPU only</span></div><div class="flex justify-between"><span>LLaMA-Factory</span><span class="text-zinc-400">~8GB min</span></div><div class="flex justify-between"><span>TRL</span><span class="text-zinc-400">~8GB min</span></div><div class="flex justify-between"><span>Little Fig</span><span class="text-fig-400">~400MB ✓</span></div></div></div>
+        </div>
+        <div class="text-center text-[0.6rem] text-zinc-600">Custom benchmark runs + evaluation scores — coming in v0.6</div>
+      </div>
+    </div>
+
+    <!-- CHECKPOINTS -->
+    <div id="p-ckpt" class="pane absolute inset-0 hidden overflow-y-auto p-6">
+      <div class="max-w-4xl mx-auto space-y-5">
+        <div class="flex items-center justify-between"><div><h2 class="text-base font-bold text-amber-400">💾 Checkpoints</h2><p class="text-xs text-zinc-500 mt-0.5">Saved training checkpoints and LoRA adapters.</p></div><button onclick="loadCheckpoints()" class="px-3 py-1 text-[0.6rem] font-bold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Refresh</button></div>
+        <div id="ckpt-list" class="space-y-2"><div class="text-xs text-zinc-600 text-center py-8">Loading checkpoints…</div></div>
       </div>
     </div>
 
@@ -213,6 +278,13 @@ document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e
 // Terminal WS
 function connectTerm(){if(termWs&&termWs.readyState===WebSocket.OPEN)return;const p=location.protocol==='https:'?'wss':'ws';termWs=new WebSocket(`${p}://${location.host}/api/terminal`);termWs.onmessage=e=>{const d=JSON.parse(e.data);if(d.type==='log'){const el=document.createElement('div');el.textContent=d.content;$('#term').appendChild(el);$('#term').scrollTop=$('#term').scrollHeight}};termWs.onclose=()=>termWs=null}
 function runCmd(){const inp=$('#term-in'),cmd=inp.value.trim();if(!cmd)return;if(!termWs||termWs.readyState!==WebSocket.OPEN){connectTerm();setTimeout(()=>{termWs.send(JSON.stringify({command:cmd}))},500)}else termWs.send(JSON.stringify({command:cmd}));inp.value=''}
+
+// Ember generate
+async function genEmberData(){$('#ember-gen-btn').disabled=true;$('#ember-result').textContent='Generating…';try{const r=await fetch('/api/ember/generate-training-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n_examples:parseInt($('#ember-n').value)})});const d=await r.json();if(r.ok)$('#ember-result').innerHTML=`<span class="text-orange-400">✓ ${d.n_examples} examples → ${d.path}</span>`;else $('#ember-result').innerHTML=`<span class="text-red-400">✗ ${d.detail}</span>`}catch(e){$('#ember-result').innerHTML=`<span class="text-red-400">✗ ${e.message}</span>`}$('#ember-gen-btn').disabled=false}
+
+// Checkpoints
+async function loadCheckpoints(){try{const r=await fetch('/api/checkpoints');const d=await r.json();if(!d.checkpoints.length){$('#ckpt-list').innerHTML='<div class="text-xs text-zinc-600 text-center py-8 border border-dashed border-zinc-800 rounded-xl">No checkpoints yet. Train a model to create checkpoints.</div>';return}$('#ckpt-list').innerHTML=d.checkpoints.map(c=>`<div class="p-3 rounded-xl border border-zinc-800 bg-zinc-900/30 flex items-center justify-between"><div><div class="text-xs font-bold text-amber-400">${c.name}</div><div class="text-[0.6rem] text-zinc-500 mt-0.5">${c.tier||'unknown'} · step ${c.step||'?'} · ${c.size_human}</div></div><div class="text-[0.55rem] text-zinc-600">${c.created?.split('T')[0]||''}</div></div>`).join('')}catch(e){$('#ckpt-list').innerHTML='<div class="text-xs text-red-400">Error loading checkpoints</div>'}}
+setTimeout(loadCheckpoints,500);
 
 // Init
 fetch('/api/model/status').then(r=>r.json()).then(d=>{if(d.loaded)connectWS()}).catch(()=>{});

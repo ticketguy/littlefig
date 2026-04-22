@@ -31,6 +31,30 @@ def _ensure_gguf():
         )
 
 
+def _decode_field_value(val):
+    """
+    Decode a GGUF metadata field value.
+    The gguf package returns numpy arrays — string fields come back as
+    arrays of uint8 (ASCII bytes). Convert them to Python str/int/float.
+    """
+    if isinstance(val, (list, np.ndarray)):
+        # Check if it looks like a byte/ASCII string (array of uint8 values 1-127)
+        try:
+            arr = np.asarray(val)
+            if arr.ndim == 1 and arr.dtype.kind in ("u", "i") and arr.size > 0:
+                if arr.min() >= 1 and arr.max() <= 127:
+                    decoded = bytes(int(b) for b in arr).decode("utf-8", errors="replace")
+                    # Only accept if it looks like a real string (printable, no control chars)
+                    if decoded.isprintable() and len(decoded) > 0:
+                        return decoded
+        except (ValueError, TypeError, UnicodeDecodeError):
+            pass
+        # Single-element list → unwrap
+        if isinstance(val, list) and len(val) == 1:
+            return val[0]
+    return val
+
+
 def read_gguf_metadata(path: str) -> dict:
     """Read GGUF file metadata without loading weights."""
     gguf_mod = _ensure_gguf()
@@ -46,9 +70,9 @@ def read_gguf_metadata(path: str) -> dict:
                     val = parts[-1].tolist()
                     if isinstance(val, list) and len(val) == 1:
                         val = val[0]
-                    metadata[name] = val
+                    metadata[name] = _decode_field_value(val)
                 elif len(parts) == 1:
-                    metadata[name] = parts[0].tolist()
+                    metadata[name] = _decode_field_value(parts[0].tolist())
             except Exception:
                 pass
 
@@ -110,10 +134,16 @@ def load_gguf_as_fig_model(
             f"Tensor names: {[t['name'] for t in meta['_tensors'][:5]]}"
         )
 
-    # Step 3: Create empty model
+    # Step 3: Create empty model from config
     from transformers import AutoModelForCausalLM
     print(f"   Creating empty {config.__class__.__name__}...")
-    model = AutoModelForCausalLM.from_config(config)
+    try:
+        model = AutoModelForCausalLM.from_config(config)
+    except Exception as e:
+        # Some text sub-configs need their specific model class
+        print(f"   AutoModelForCausalLM.from_config failed ({e})")
+        print(f"   Trying architecture-specific model class...")
+        model = _create_model_from_config(config)
     model.eval()
 
     # Step 4: Load weights one tensor at a time (stream, don't bulk-dequant)
@@ -241,29 +271,144 @@ def load_gguf_as_fig_model(
 def _map_gguf_name_to_hf(gguf_name: str, arch: str) -> str:
     """Map GGUF tensor name to HuggingFace state_dict name."""
     name = gguf_name
+
+    # ── Global (non-layer) tensor mappings ────────────────────────────────
+    _global_map = {
+        "token_embd.":           "model.embed_tokens.",
+        "output_norm.":          "model.norm.",
+        "output.":               "lm_head.",
+        # Gemma 3n / Gemma 4 specific
+        "per_layer_token_embd.": "model.embed_tokens_per_layer.",
+        "per_layer_model_proj.": "model.per_layer_model_projection.",
+        "per_layer_proj_norm.":  "model.per_layer_projection_norm.",
+        "altup_proj.":           "model.altup_projections.",
+        "altup_unembd_proj.":    "model.altup_unembed_projections.",
+    }
+    for gguf_prefix, hf_prefix in _global_map.items():
+        if name.startswith(gguf_prefix):
+            name = name.replace(gguf_prefix, hf_prefix, 1)
+            if not name.endswith(".weight") and not name.endswith(".bias"):
+                name += ".weight"
+            return name
+
+    # ── Per-layer tensor mappings (blk.N.xxx) ─────────────────────────────
     name = name.replace("blk.", "model.layers.")
+
+    # Standard attention & MLP
     name = name.replace(".attn_q.", ".self_attn.q_proj.")
     name = name.replace(".attn_k.", ".self_attn.k_proj.")
     name = name.replace(".attn_v.", ".self_attn.v_proj.")
     name = name.replace(".attn_output.", ".self_attn.o_proj.")
+    name = name.replace(".attn_q_norm.", ".self_attn.q_norm.")
+    name = name.replace(".attn_k_norm.", ".self_attn.k_norm.")
     name = name.replace(".ffn_gate.", ".mlp.gate_proj.")
     name = name.replace(".ffn_up.", ".mlp.up_proj.")
     name = name.replace(".ffn_down.", ".mlp.down_proj.")
+
+    # Layer norms
     name = name.replace(".attn_norm.", ".input_layernorm.")
-    name = name.replace(".ffn_norm.", ".post_attention_layernorm.")
-    name = name.replace("token_embd.", "model.embed_tokens.")
-    name = name.replace("output_norm.", "model.norm.")
-    name = name.replace("output.", "lm_head.")
+    name = name.replace(".ffn_norm.", ".pre_feedforward_layernorm.")
+    name = name.replace(".post_attention_norm.", ".post_attention_layernorm.")
+    name = name.replace(".post_ffw_norm.", ".post_feedforward_layernorm.")
+
+    # Gemma 3n / Gemma 4: Laurel (Learned Augmented Residual Layer)
+    name = name.replace(".laurel_l.", ".laurel.linear_left.")
+    name = name.replace(".laurel_r.", ".laurel.linear_right.")
+    name = name.replace(".laurel_post_norm.", ".laurel.post_laurel_norm.")
+
+    # Gemma 3n / Gemma 4: Per-Layer Embeddings (PLE)
+    name = name.replace(".inp_gate.", ".per_layer_input_gate.")
+    name = name.replace(".proj.", ".per_layer_projection.")
+    name = name.replace(".post_norm.", ".post_per_layer_input_norm.")
+
+    # Gemma 3n / Gemma 4: AltUp (Alternating Updates)
+    name = name.replace(".altup_correct_coef.", ".altup.correction_coefs.")
+    name = name.replace(".altup_correct_scale", ".altup.correct_output_scale")
+    name = name.replace(".altup_predict_coef.", ".altup.prediction_coefs.")
+    name = name.replace(".altup_router.", ".altup.modality_router.")
+    name = name.replace(".altup_router_norm.", ".altup.router_norm.")
+
+    # Fallback for older Gemma (ffn_norm → post_attention_layernorm)
+    # Only if not already mapped above
+    if ".post_attention_layernorm." not in name:
+        name = name.replace(".ffn_norm.", ".post_attention_layernorm.")
 
     if not name.endswith(".weight") and not name.endswith(".bias"):
         name += ".weight"
     return name
 
 
-def _build_config_from_meta(meta: dict, arch: str):
-    """Build a HuggingFace model config from GGUF metadata."""
-    from transformers import AutoConfig
+def _create_model_from_config(config):
+    """
+    Create a causal LM model from a config object.
+    Handles special cases like Gemma4TextConfig / Gemma3nTextConfig which
+    need their specific ForCausalLM class rather than Auto dispatch.
+    """
+    import transformers
 
+    config_type = type(config).__name__
+    # Map config class names → model class names
+    _model_class_map = {
+        "Gemma4TextConfig":  "Gemma4ForCausalLM",
+        "Gemma3nTextConfig": "Gemma3nForCausalLM",
+        "Gemma3TextConfig":  "Gemma3ForCausalLM",
+    }
+
+    model_cls_name = _model_class_map.get(config_type)
+    if model_cls_name:
+        model_cls = getattr(transformers, model_cls_name, None)
+        if model_cls is not None:
+            print(f"   Using {model_cls_name}")
+            return model_cls(config)
+
+    # Last resort: try _from_config with trust_remote_code
+    from transformers import AutoModelForCausalLM
+    return AutoModelForCausalLM.from_config(config, trust_remote_code=True)
+
+
+def _build_config_from_meta(meta: dict, arch: str):
+    """
+    Build a HuggingFace model config from GGUF metadata.
+
+    For complex/new architectures (gemma4, gemma3n, etc.) we first try to
+    download the authoritative config from HuggingFace Hub.  If that fails
+    we fall back to manual construction from GGUF metadata fields.
+    """
+    # Ensure arch is a string (defensive — _decode_field_value should handle this)
+    if not isinstance(arch, str):
+        try:
+            arch = bytes(int(b) for b in arch).decode("utf-8", errors="replace")
+        except Exception:
+            arch = str(arch)
+
+    # ── Complex architectures: try downloading config from Hub first ──────
+    # These architectures have specialised sub-modules (PLE, AltUp, Laurel,
+    # shared KV, etc.) that cannot be reconstructed from GGUF scalars alone.
+    _hub_config_map = {
+        "gemma4":      "google/gemma-4-e4b-it",
+        "gemma3n":     "google/gemma-4-e4b-it",
+        "gemma3":      "google/gemma-3-4b-it",
+        "gemma3_text": "google/gemma-3-4b-it",
+    }
+
+    hub_id = _hub_config_map.get(arch)
+    if hub_id:
+        try:
+            from transformers import AutoConfig
+            print(f"   Downloading config from {hub_id} (arch={arch})...")
+            cfg = AutoConfig.from_pretrained(hub_id)
+            # For multimodal configs, extract the text sub-config
+            text_cfg = getattr(cfg, "text_config", None)
+            if text_cfg is not None:
+                print(f"   ✓ Using {text_cfg.__class__.__name__} from {hub_id}")
+                return text_cfg
+            print(f"   ✓ Using {cfg.__class__.__name__} from {hub_id}")
+            return cfg
+        except Exception as e:
+            print(f"   ⚠ Could not download config from {hub_id}: {e}")
+            print(f"   Falling back to manual config construction...")
+
+    # ── Standard architectures: build config from GGUF metadata ───────────
     # Try multiple prefixes (GGUF uses arch name as prefix)
     prefixes = [arch, "llama", "gemma", "gemma2"]
 
@@ -300,9 +445,6 @@ def _build_config_from_meta(meta: dict, arch: str):
         "llama": "LlamaConfig",
         "gemma": "GemmaConfig",
         "gemma2": "Gemma2Config",
-        "gemma3": "Gemma2Config",
-        "gemma3_text": "Gemma2Config",
-        "gemma4": "Gemma2Config",
         "mistral": "MistralConfig",
         "phi": "PhiConfig",
         "phi3": "Phi3Config",
@@ -345,7 +487,11 @@ def _find_tokenizer(meta: dict, arch: str, model_name: str):
 
         # Try known mappings based on architecture and name
         candidates = []
-        if "gemma" in arch or "gemma" in name_lower:
+        if "gemma4" in arch or "gemma-4" in name_lower or "gemma4" in name_lower:
+            candidates = ["google/gemma-4-e4b-it", "google/gemma-3-4b-it"]
+        elif "gemma3n" in arch or "gemma-3n" in name_lower:
+            candidates = ["google/gemma-4-e4b-it", "google/gemma-3-4b-it"]
+        elif "gemma" in arch or "gemma" in name_lower:
             candidates = ["google/gemma-3-4b-it", "google/gemma-2-2b-it"]
         elif "llama" in arch or "llama" in name_lower:
             candidates = ["meta-llama/Llama-3.2-1B-Instruct", "meta-llama/Llama-3.1-8B-Instruct"]

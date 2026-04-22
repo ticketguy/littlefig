@@ -153,12 +153,17 @@ class FigLanguageModel:
         # ── Local HF folder or Hub model ─────────────────────────────────
         gpu = hw.get("gpu_available", False)
 
+        # GPU: always use standard HF loading (FP16/BF16, leverage GPU VRAM)
+        # CPU: use Fig Engine INT4 for large models, FP32 for small ones
         if use_int4 is None:
-            ram_gb = hw.get("ram_available_gb", 16)
-            large_indicators = ["4b", "7b", "8b", "13b", "70b", "gemma-3", "gemma-4"]
-            name_lower = model_name_or_path.lower()
-            large_model = any(x in name_lower for x in large_indicators)
-            use_int4 = (not gpu) and (ram_gb < 12 or large_model)
+            if gpu:
+                use_int4 = False  # GPU has its own optimizations
+            else:
+                ram_gb = hw.get("ram_available_gb", 16)
+                large_indicators = ["4b", "7b", "8b", "13b", "70b", "gemma-3", "gemma-4"]
+                name_lower = model_name_or_path.lower()
+                large_model = any(x in name_lower for x in large_indicators)
+                use_int4 = ram_gb < 12 or large_model
 
         if use_int4:
             return FigLanguageModel._load_int4(model_name_or_path, hw)
@@ -192,12 +197,27 @@ class FigLanguageModel:
 
     @staticmethod
     def _load_fp32(model_name: str, hw: dict) -> "FigLanguageModel":
-        """Load model in full FP32."""
+        """
+        Load model in native precision.
+        GPU: FP16 or BF16 (fast, leverages GPU VRAM).
+        CPU: FP32 (most compatible).
+        """
         gpu = hw.get("gpu_available", False)
-        dtype = torch.float16 if gpu else torch.float32
 
-        print(f"🍐 Loading: {model_name} (FP32)")
-        print(f"   Device : {'GPU' if gpu else 'CPU'}")
+        if gpu:
+            # Prefer BF16 on Ampere+ (compute capability 8.0+), else FP16
+            try:
+                props = torch.cuda.get_device_properties(0)
+                dtype = torch.bfloat16 if props.major >= 8 else torch.float16
+            except Exception:
+                dtype = torch.float16
+            dtype_label = "BF16" if dtype == torch.bfloat16 else "FP16"
+        else:
+            dtype = torch.float32
+            dtype_label = "FP32"
+
+        print(f"🍐 Loading: {model_name} ({dtype_label})")
+        print(f"   Device : {'GPU (' + hw.get('gpu_name', '') + ')' if gpu else 'CPU'}")
 
         load_kwargs = {"torch_dtype": dtype, "low_cpu_mem_usage": True}
         try:
@@ -211,7 +231,7 @@ class FigLanguageModel:
         model.eval()
 
         param_count = sum(p.numel() for p in model.parameters()) / 1e9
-        print(f"   ✓ {param_count:.2f}B parameters loaded")
+        print(f"   ✓ {param_count:.2f}B parameters loaded ({dtype_label})")
 
         return FigLanguageModel(model, tokenizer, model_name, backend="hf")
 

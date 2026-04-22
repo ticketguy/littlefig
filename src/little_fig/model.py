@@ -180,7 +180,7 @@ class FigLanguageModel:
         from little_fig.engine.gguf_loader import load_gguf_as_fig_model
 
         print(f"🍐 Loading GGUF: {os.path.basename(path)}")
-        print(f"   Using Fig Engine native GGUF reader (pure Python)")
+        print(f"   Using universal GGUF loader (auto-detects any architecture)")
 
         fig_model = load_gguf_as_fig_model(path, lora_r=0, lora_alpha=0)
 

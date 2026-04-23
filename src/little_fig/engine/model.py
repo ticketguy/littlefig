@@ -464,6 +464,94 @@ class FigModel(nn.Module):
         
         print(f"🍐 ✓ Pushed to https://huggingface.co/{repo_id}")
     
+    def set_memory_mode(self, mode: str):
+        """Set memory mode for all FigLinear layers.
+        
+        Modes:
+            "fast"     — Full FP32 weight cache. Fastest, most memory.
+            "figcache" — FigCache: uint8 index cache. 75% less memory, 2× slower than fast.
+            "lowram"   — No cache. Minimum memory, 3× slower than fast.
+        """
+        count = 0
+        for fig_layer in self._fig_layers.values():
+            if hasattr(fig_layer, 'set_mode'):
+                fig_layer.set_mode(mode)
+                count += 1
+        print(f"🍐 Memory mode: {mode} ({count} layers)")
+
+    def enable_figsweep(self, window_size: int = 4):
+        """FigSweep: Rolling layer dequant window.
+        
+        Instead of caching ALL layers (fast mode) or NONE (lowram),
+        maintains a sliding window of `window_size` fast-mode layers.
+        As training moves through layers sequentially, the window rolls forward.
+        
+        Memory: window_size × per_layer_cache instead of all_layers × per_layer_cache
+        Speed: near-fast for layers in window, lowram for others
+        
+        For GPT-2 (48 layers), window=4: 25 MB vs 302 MB (12× less).
+        
+        Call this AFTER from_pretrained() to switch from full fast mode.
+        """
+        # Start all layers in lowram, then cache the first window
+        layer_names = sorted(self._fig_layers.keys())
+        for name in layer_names:
+            layer = self._fig_layers[name]
+            if hasattr(layer, 'set_mode'):
+                layer.set_mode("lowram")
+        
+        # Cache the first window
+        for name in layer_names[:window_size]:
+            layer = self._fig_layers[name]
+            if hasattr(layer, 'set_mode'):
+                layer.set_mode("fast")
+        
+        self._figsweep_window = window_size
+        self._figsweep_layers = layer_names
+        self._figsweep_pos = 0
+        
+        total_layers = len(layer_names)
+        if total_layers > 0:
+            per_layer_kb = sum(
+                self._fig_layers[layer_names[0]]._cached_W.numel() * 4
+                for n in layer_names[:1]
+                if self._fig_layers[n]._cached_W is not None
+            ) / 1024
+            full_mb = total_layers * per_layer_kb / 1024
+            sweep_mb = window_size * per_layer_kb / 1024
+            print(f"🍐 FigSweep: window={window_size}/{total_layers} layers "
+                  f"({sweep_mb:.0f} MB vs {full_mb:.0f} MB full cache)")
+
+    def figsweep_advance(self, layer_idx: int):
+        """Advance the FigSweep window to cover layer_idx.
+        Call this before each layer's forward pass during training.
+        """
+        if not hasattr(self, '_figsweep_window'):
+            return
+        
+        layers = self._figsweep_layers
+        w = self._figsweep_window
+        n = len(layers)
+        
+        if layer_idx >= n:
+            return
+        
+        # Determine window: [layer_idx, layer_idx + w)
+        window_start = layer_idx
+        window_end = min(layer_idx + w, n)
+        
+        # Cache layers in window that aren't already cached
+        for i in range(window_start, window_end):
+            layer = self._fig_layers[layers[i]]
+            if hasattr(layer, '_cached_W') and layer._cached_W is None:
+                layer.set_mode("fast")
+        
+        # Free layers before window
+        if layer_idx > 0:
+            layer = self._fig_layers[layers[layer_idx - 1]]
+            if hasattr(layer, 'set_mode'):
+                layer.set_mode("lowram")
+
     def print_trainable_summary(self):
         """Print a summary of trainable vs frozen parameters."""
         trainable = 0

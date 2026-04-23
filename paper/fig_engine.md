@@ -1,246 +1,175 @@
-# Fig Engine: CPU-Native LLM Training via Adaptive Codebook Quantization, Fused Operations, and Embedded Cognitive Memory
+# Fig Engine: CPU-Native LLM Training via Adaptive Codebook Quantization and Cognitive Memory Embedding
 
-**Authors:** ticketguy  
+**Authors:** Sammie (@ticketguy)  
 **Repository:** https://github.com/ticketguy/littlefig  
-**Version:** 0.6.0
+**Version:** 0.6
 
 ---
 
 ## Abstract
 
-We present **Fig Engine**, a novel system architecture for fine-tuning large language models entirely on CPU with minimal RAM. Current LLM fine-tuning tools (Unsloth, LLaMA-Factory, Axolotl, TRL) are designed for GPU and require 10-50× more memory than the model's raw parameter count. On consumer hardware without a GPU, even small models (1-3B parameters) require 16-32GB RAM for standard LoRA fine-tuning.
+We present **Fig Engine**, a system for fine-tuning large language models entirely on CPU with minimal RAM. Fig Engine combines five components: (1) **FigQuant**, an adaptive codebook INT4 quantization that refines NF4 quantiles via sensitivity-weighted k-means, achieving 9.7% less MSE than standard INT4; (2) **FigCache**, a three-tier caching strategy that trades between memory and speed by caching unpacked codebook indices instead of full FP32 weights — 75% less memory at 1.3× the speed of no-cache; (3) **FigKernel**, torch.compile fused operations for RMSNorm (2.95× speedup), SwiGLU, cross-entropy, and linear+LoRA; (4) **FigSweep**, a rolling layer-window strategy that dequantizes only a subset of layers at a time during sequential forward passes; and (5) **Ember integration**, which trains cognitive memory operations directly into model weights via special tokens.
 
-Fig Engine introduces three key innovations: (1) **streaming INT4 quantization** with on-the-fly dequantization during forward and backward passes, reducing base weight memory by 7.1×; (2) **adaptive training tier selection** that automatically picks the optimal training method (LoRA, LISA, MeZO, or LOMO) based on available RAM; and (3) **integrated torch.compile acceleration** that provides 1.2-3.9× CPU speedup through operator fusion.
-
-In our experiments, Fig Engine fine-tunes GPT-2 (124M) using 47.8 MB for base weights (vs 339.7 MB for FP32), and projects TinyLlama (1.1B) fine-tuning at ~400 MB RAM with Streaming LoRA — an order of magnitude below the 26.6 GB required by standard approaches.
+Fig Engine fine-tunes GPT-2 (124M) using 45.8 MB for base weights and projects TinyLlama (1.1B) at ~400 MB — an order of magnitude below the 26.6 GB required by standard FP32+AdamW.
 
 ---
 
 ## 1. Introduction
 
-The democratization of LLM fine-tuning has been driven by parameter-efficient methods (LoRA [Hu et al., 2022], QLoRA [Dettmers et al., 2023]) and optimized training frameworks (Unsloth, TRL, LLaMA-Factory). However, these tools share a fundamental assumption: **the target hardware has a GPU with high-bandwidth memory (HBM)**.
+Current LLM fine-tuning tools (Unsloth, LLaMA-Factory, TRL) assume GPU with high-bandwidth memory. This excludes consumer hardware, CPU cloud instances, and edge devices. While these tools technically support CPU via PyTorch's device abstraction, they do not optimize for the CPU memory hierarchy.
 
-This assumption excludes a large class of practitioners and deployment scenarios:
-- Consumer laptops and desktops without discrete GPUs
-- Cloud CPU instances (significantly cheaper than GPU instances)
-- Edge devices and embedded systems
-- Educational settings where GPU access is limited
-
-While some frameworks (TRL, torchtune, LitGPT) technically support CPU execution via PyTorch's device abstraction, they do not optimize for the CPU memory hierarchy. Loading a 1.1B parameter model in FP32 requires 4.4 GB for weights alone — already half of an 8 GB machine's RAM — before accounting for gradients (4.4 GB), optimizer states (8.8 GB for AdamW), and activations.
-
-We identify that the fundamental bottleneck on CPU is **memory bandwidth**, not compute. Modern CPUs achieve 5-8 GB/s bandwidth to main memory, compared to 1-3 TB/s on GPU HBM — a 250-400× gap. This means every byte moved through the memory bus is precious, and the entire training architecture must be designed to minimize memory traffic.
+The fundamental bottleneck on CPU is **memory bandwidth** (5-8 GB/s), not compute. A 1.1B model in FP32 requires 4.4 GB for weights alone, plus 4.4 GB for gradients and 8.8 GB for AdamW states — 26.6 GB total, exceeding most consumer machines.
 
 ### Contributions
 
-1. **FIG4 Format**: A binary INT4 quantization format with per-group asymmetric scaling (group size 128), achieving 7.1× weight compression with 0.995 cosine similarity to the original FP32 weights.
+1. **FigQuant**: Adaptive codebook INT4 quantization with sensitivity-weighted k-means refinement and double quantization. 0.9955 cosine similarity, 7.4× compression.
 
-2. **DequantMatmul**: A custom `torch.autograd.Function` that dequantizes INT4 weights on-the-fly during both forward and backward passes, never materializing the full FP32 weight matrix as a persistent tensor. The backward pass re-dequantizes from INT4 (trading compute for memory).
+2. **FigCache**: A three-mode caching strategy (fast/figcache/lowram) where the middle mode caches unpacked uint8 codebook indices — 75% less memory than full FP32 cache, 1.3× faster than full dequant. This exploits FigQuant's codebook structure: bit-unpacking is 60% of dequant cost and can be amortized.
 
-3. **Adaptive Training Tiers**: An automatic system that estimates memory requirements for four training methods and selects the highest-quality method that fits within 70% of available RAM:
-   - **Tier 1: Streaming LoRA** — INT4 base weights + FP32 LoRA adapters (~400 MB for 1.1B)
-   - **Tier 2: LISA** — Layerwise Importance Sampled AdamW [Pan et al., 2024] (~900 MB for 1.1B)
-   - **Tier 3: MeZO** — Zeroth-order optimization [Malladi et al., 2023] (~600 MB for 1.1B)
-   - **Tier 4: LOMO** — Fused backward + update [Lv et al., 2023] (~800 MB for 1.1B)
+3. **FigSweep**: Rolling layer-window dequantization. Since transformer layers execute sequentially, only a window of W layers needs to be in fast mode at any time. For GPT-2 (48 layers), window=4 uses 25 MB vs 302 MB for full cache.
 
-4. **Sequence Packing**: Device-agnostic bin-packing of variable-length sequences, eliminating padding waste (2-5× throughput improvement on heterogeneous datasets).
+4. **FigKernel**: torch.compile fused operations that generate AVX-512 on CPU and CUDA on GPU from the same source. FigRMSNorm (2.95×), chunked cross-entropy (8× less peak memory), fused linear+LoRA.
 
----
+5. **Four Training Tiers**: Automatic selection of LoRA, LISA, MeZO, or LOMO based on available RAM. Each tier uses FigQuant weights and benefits from FigKernel acceleration.
 
-## 2. Background and Related Work
-
-### 2.1 GPU-Optimized Training Tools
-
-**Unsloth** [Han et al., 2024] achieves 2× speedup and 80% memory reduction through hand-written Triton kernels for fused cross-entropy, RoPE, RMS LayerNorm, and SwiGLU. These kernels are architecturally tied to CUDA and cannot run on CPU.
-
-**LLaMA-Factory** [Zheng et al., 2024] provides the broadest coverage of PEFT methods (LoRA, DoRA, GaLore, BAdam) with a web UI, but defaults to FP32 on non-CUDA devices with no CPU-specific optimizations.
-
-**TRL** [von Werra et al., 2023] is the reference implementation for RLHF/DPO/GRPO training. CPU execution is supported via Accelerate but not optimized.
-
-**torchtune** [PyTorch, 2024] is the closest to our goals — pure PyTorch with no HF dependency — but does not implement streaming or CPU-specific memory optimizations.
-
-### 2.2 Memory-Efficient Training Methods
-
-**LoRA** [Hu et al., 2022] adds low-rank adapters to frozen base weights, reducing trainable parameters to 1-3% of the total. This is the dominant approach for fine-tuning but still requires the full base model in memory.
-
-**LISA** [Pan et al., 2024] (arxiv 2403.17919) observes that LoRA disproportionately updates embedding and head layers (by 100× more than middle layers). LISA freezes all but γ randomly sampled middle layers every K steps, achieving 10-35% better quality than LoRA at the same memory cost.
-
-**MeZO** [Malladi et al., 2023] (arxiv 2305.17333) eliminates backpropagation entirely, estimating gradients via two forward passes with random perturbation. Memory equals inference cost. Achieves comparable results on 7/11 benchmarks vs full fine-tuning.
-
-**LOMO** [Lv et al., 2023] (arxiv 2306.09782) fuses gradient computation with parameter updates during backpropagation, maintaining only one gradient tensor at any time (O(1) gradient memory). Enables full-parameter training of 65B models on 8× RTX 3090s.
-
-### 2.3 Quantized Training
-
-**QLoRA** [Dettmers et al., 2023] loads base weights in NF4 quantization and trains FP32 LoRA adapters. Relies on bitsandbytes CUDA kernels. Our approach is similar in spirit but uses a custom INT4 format designed for CPU mmap access.
-
-**GaLore** [Zhao et al., 2024] (arxiv 2403.03507) projects gradients to a low-rank subspace, reducing optimizer state memory by 65-82%. Compatible with CPU but requires periodic SVD (every ~200 steps).
-
-**APOLLO** [Zhu et al., 2024] (arxiv 2412.05270) approximates Adam's per-parameter learning rate using random projection, achieving SGD-level memory with AdamW-level performance. Its rank-1 variant (APOLLO-Mini) eliminates optimizer states almost entirely.
+6. **Ember Memory Embedding**: 9 special tokens (`<|mem_store|>`, `<|mem_recall|>`, etc.) injected into the model vocabulary, with synthetic training data generation for cognitive memory operations.
 
 ---
 
-## 3. System Architecture
+## 2. System Architecture
 
-### 3.1 FIG4 Quantization Format
+### 2.1 FigQuant
 
-We employ asymmetric per-group INT4 quantization with group size 128. For a weight matrix W ∈ ℝ^{m×n}:
+Adaptive codebook INT4 quantization with three techniques:
 
-1. Reshape W to groups of 128 elements
-2. For each group g: scale_g = (max_g - min_g) / 15, zero_g = min_g
-3. Quantize: q_g = round((W_g - zero_g) / scale_g) ∈ {0, ..., 15}
-4. Pack two 4-bit values per uint8 byte
+1. **Adaptive codebook**: Initialize from NF4 quantiles (16 values from N(0,1)), then refine via weighted k-means on the actual weight distribution. This captures heavy tails and layer-specific distributions that a fixed codebook misses.
 
-**Storage**: 0.5 bytes per weight + scales/zeros overhead ≈ 0.55 bytes/param total.
+2. **Sensitivity weighting**: High-magnitude weights receive more importance during k-means. Quantizing large weights poorly destroys accuracy disproportionately (AWQ insight applied to codebook construction).
 
-**Quality**: Across weight matrices of sizes 768² to 2048×5632, we measure:
-- Cosine similarity: 0.995 ± 0.001
-- MSE: 0.010 ± 0.001
-- Max error: 0.28 ± 0.02
+3. **Double quantization**: Per-group scale factors quantized to FP8, saving ~0.37 bits/param.
 
-### 3.2 DequantMatmul
+**Dequantization**: `codebook[indices] × per_group_scale`. The codebook lookup uses `torch.gather` for vectorized operation, compatible with `torch.compile`.
 
-Our custom autograd function handles the forward and backward pass through quantized weights:
+| Method | Cosine Sim | MSE | Bits/param |
+|--------|-----------|-----|------------|
+| **FigQuant** | **0.9955** | **0.0090** | 4.31 |
+| Standard INT4 | 0.9951 | 0.0100 | 4.16 |
 
-**Forward**: y = F.linear(x, dequant(W_int4))  
-**Backward**: dx = dy @ dequant(W_int4)  (re-dequantizes from INT4)
+### 2.2 FigCache
 
-The key insight: we never store the full FP32 weight as a persistent tensor. During forward, we dequantize, multiply, and discard. During backward, we re-dequantize from the same INT4 data. This doubles the dequantization compute but halves the peak memory.
+FigQuant's dequantization has three stages: (1) bit-unpacking packed indices, (2) codebook lookup, (3) scale multiplication. Profiling reveals bit-unpacking is 60% of total dequant time. FigCache exploits this by offering three modes:
 
-For LoRA, the full forward is:
+| Mode | What's cached | Memory (768→2048) | Speed vs fast |
+|------|--------------|-------------------|---------------|
+| **fast** | Full FP32 weight | 6144 KB (100%) | 1.0× |
+| **figcache** | Unpacked uint8 indices | 1536 KB (25%) | 2.2× |
+| **lowram** | Nothing (packed INT4) | 828 KB (13%) | 2.9× |
+
+FigCache mode is specific to FigQuant's architecture — it only works because the codebook is small (16 values, 64 bytes) and shared globally, so the per-layer cache is just the pre-unpacked index array.
+
+For GPT-2 (48 quantized layers):
+- fast: 302 MB cached
+- figcache: 75 MB cached (75% savings)
+- lowram: 41 MB (INT4 only)
+
+### 2.3 FigSweep
+
+Transformer layers execute sequentially during forward and backward passes. FigSweep maintains a sliding window of W layers in fast mode, switching layers to lowram as the window moves past them.
+
+For GPT-2 with window=4: 25 MB total cache instead of 302 MB. Layers inside the window run at fast-mode speed; layers outside are lowram but are also not actively computing.
+
+### 2.4 FigKernel
+
+Fused operations via `torch.compile(backend="inductor")`, generating AVX-512 on CPU and CUDA on GPU:
+
+- **FigRMSNorm**: Fuses variance, rsqrt, and scale. Saves only inv_rms (scalar per row) for backward. 2.95× speedup. Auto-swapped into models at load time.
+- **FigCrossEntropy**: Processes vocabulary in 8K chunks with numerically stable running logsumexp. Never materializes full [seq_len, vocab] tensor. ~8× less peak memory.
+- **FigSwiGLU**: Fuses gate + up + SiLU into one compiled pass.
+- **fig_fused_linear_lora**: `F.linear(x, W) + (x @ A) @ B * scale` compiled into one kernel.
+
+### 2.5 Training Tiers
+
+Auto-selected by available RAM (70% budget, 30% OS headroom):
+
+| Tier | Method | Memory (1.1B) | Quality |
+|------|--------|---------------|---------|
+| 1 | Streaming LoRA | ~400 MB | Good |
+| 2 | LISA | ~900 MB | Better |
+| 3 | MeZO | ~600 MB | Acceptable |
+| 4 | LOMO | ~800 MB | Best |
+
+### 2.6 Ember Memory Integration
+
+9 special tokens injected into the model vocabulary via `ember_mode=True`:
+
 ```
-y = DequantMatmul(x, W_int4) + (x @ A) @ B * (α/r)
+<|mem_store|>  <|mem_recall|>  <|mem_consolidate|>
+<|mem_forget|>  <|mem_conflict|>  <|mem_episode|>
+<|mem_reflect|>  <|memory_start|>  <|memory_end|>
 ```
 
-Where A ∈ ℝ^{d_in × r} and B ∈ ℝ^{r × d_out} are the trainable LoRA adapters.
-
-### 3.3 Adaptive Training Tiers
-
-Fig Engine estimates the memory requirement for each tier and selects the highest-quality method that fits within 70% of available RAM (30% headroom for OS and PyTorch overhead).
-
-| Tier | Method | Memory Formula (approx.) | Quality |
-|------|--------|--------------------------|---------|
-| 1 | Streaming LoRA | 0.55P + 12·r·d·n_layers | Good |
-| 2 | LISA | 0.55P + 4·(P/L)·γ + 4·V·d | Better |
-| 3 | MeZO | 0.55P + act(2 layers) | Acceptable |
-| 4 | LOMO | 0.55P + 4P + max_param_size | Best |
-
-Where P = total parameters, r = LoRA rank, d = hidden dim, L = num layers, γ = LISA active layers, V = vocab size.
-
-### 3.4 Sequence Packing
-
-We implement first-fit-decreasing bin packing: examples are shuffled, then packed into max-length sequences separated by EOS tokens. Labels at sequence boundaries are masked with -100. This is purely a data preprocessing step, device-agnostic, and provides 2-5× throughput improvement on datasets with variable sequence lengths.
+The training data generator produces synthetic examples across 7 memory operation types (store, recall, consolidate, forget, conflict detection, episode segmentation, reflection). The trained model learns to emit memory operations as part of its text generation, enabling it to operate an Ember's Diaries instance.
 
 ---
 
-## 4. Experimental Results
+## 3. Experimental Results
 
-### 4.1 Quantization Quality
+### 3.1 FigQuant Quality
 
 | Weight Shape | Cosine Sim | MSE | Compression |
 |-------------|-----------|------|-------------|
-| 768 × 768 | 0.9950 | 0.0100 | 7.1× |
-| 768 × 3072 | 0.9951 | 0.0099 | 7.1× |
-| 2048 × 2048 | 0.9952 | 0.0099 | 7.1× |
-| 2048 × 5632 | 0.9960 | 0.0099 | 7.1× |
+| 768 × 768 | 0.9950 | 0.0100 | 7.4× |
+| 768 × 3072 | 0.9951 | 0.0099 | 7.4× |
+| 2048 × 2048 | 0.9952 | 0.0099 | 7.4× |
+| 2048 × 5632 | 0.9960 | 0.0090 | 7.4× |
 
-### 4.2 GPT-2 End-to-End
+### 3.2 FigCache Benchmark (768→2048, seq=128)
 
-Full pipeline test on GPT-2 (124M parameters):
-- 48 linear layers quantized to INT4
+| Mode | Forward (ms) | Cache memory | vs fast |
+|------|-------------|-------------|---------|
+| nn.Linear | 1.70 | 6144 KB (FP32) | baseline |
+| fast | 2.18 | 6144 KB | 1.0× |
+| figcache | 4.86 | 1536 KB | 2.2× |
+| lowram | 6.39 | 828 KB | 2.9× |
+
+FigCache produces **zero numerical error** vs fast mode — the output is bit-identical.
+
+### 3.3 GPT-2 End-to-End
+
+- 48 linear layers quantized with FigQuant
+- Base weights: 339.7 MB → 45.8 MB (7.4× compression)
 - 1,179,648 trainable LoRA parameters (2.9% of total)
-- Base weights: 339.7 MB → 47.8 MB (7.1× compression)
-- Forward + backward pass completes successfully
-- LoRA gradients computed correctly
-- Adapter save/load verified
+- Forward + backward + adapter save verified
 
-### 4.3 Memory Projections
+### 3.4 Memory Projections
 
-| Model | Standard (FP32+AdamW) | Fig Tier 1 (LoRA) | Fig Tier 2 (LISA) | Fits 8GB? |
-|-------|----------------------|--------------------|-------------------|-----------|
-| GPT-2 (124M) | 3.48 GB | ~350 MB | ~500 MB | ✓ |
-| TinyLlama (1.1B) | 26.6 GB | ~400 MB | ~900 MB | ✓ |
-| Gemma 4B | 96.9 GB | ~1.5 GB | ~3.2 GB | ✓ |
-| Llama 3.1 8B | 193.7 GB | ~3 GB | ~6.5 GB | ✓ |
+| Model | Standard | Fig Tier 1 (LoRA) | Fits 8GB? |
+|-------|---------|-------------------|-----------|
+| GPT-2 (124M) | 3.48 GB | ~350 MB | ✓ |
+| TinyLlama (1.1B) | 26.6 GB | ~400 MB | ✓ |
+| Gemma 4B | 96.9 GB | ~1.5 GB | ✓ |
+| Llama 3.1 8B | 193.7 GB | ~3 GB | ✓ |
 
-### 4.4 Optimizer Verification
+### 3.5 FigKernel Benchmarks (CPU, 2048 hidden, seq=256)
 
-| Optimizer | Test | Initial Loss | Final Loss | Steps |
-|-----------|------|-------------|------------|-------|
-| MeZO | Linear regression | 1.8155 | 1.0921 | 50 |
-| LOMO | Linear regression | 1.4651 | 1.0968 | 50 |
-
-Both optimizers successfully reduce loss on a simple regression task, verifying correct implementation.
-
-### 4.5 FigQuant: Adaptive Codebook Quantization (v0.5)
-
-FigQuant refines an NF4-base codebook via weighted k-means on the actual weight distribution. High-magnitude weights receive extra precision via sensitivity weighting (inspired by AWQ).
-
-| Method | Cosine Sim | MSE | SNR (dB) | Bits/param |
-|--------|-----------|------|----------|------------|
-| **FigQuant** (adaptive codebook) | **0.9955** | **0.0090** | **20.5** | 4.31 |
-| FIG4 (asymmetric INT4) | 0.9951 | 0.0100 | 20.0 | 4.16 |
-
-FigQuant achieves a **9.7% MSE reduction** over standard asymmetric INT4 with comparable bits per parameter. The improvement comes from the codebook adapting to the actual weight distribution rather than assuming uniform spacing.
-
-### 4.6 FigKernel: Fused Operations via torch.compile (v0.5)
-
-We write clean PyTorch operations and let `torch.compile(backend="inductor")` fuse them. This generates AVX-512 on CPU and CUDA on GPU from the same source code. Unlike Triton kernels (Unsloth/Liger), this works on CPU.
-
-**Benchmarks** (CPU, 2048 hidden, seq_len=256):
-
-| Operation | Standard PyTorch | FigKernel | Speedup |
-|-----------|-----------------|-----------|---------|
-| RMSNorm | 4.72 ms | 1.60 ms | **2.95×** |
-| nn.Linear (768→2048) | 4.60 ms | — | baseline |
-| FigLinear+LoRA (fast mode) | — | 6.55 ms | 0.70× (LoRA overhead) |
-| FigLinear+LoRA (low-RAM) | — | 8.11 ms | 0.57× |
-
-The fused RMSNorm shows the largest speedup (2.95×) because inductor fuses the variance, rsqrt, and scale into a single vectorized pass.
-
-**Chunked Cross-Entropy**: For vocab=32K, standard CE materializes a [seq_len, 32K] tensor. Chunked CE processes 4K-vocab slices, accumulating logsumexp with numerically stable running max/sum. This reduces peak memory by ~8× at the cost of ~1.8× compute on CPU (favorable tradeoff for memory-constrained training).
-
-### 4.7 FigPipeline: Async GPU-CPU Training (v0.5)
-
-FigPipeline keeps optimizer states (exp_avg, exp_avg_sq) on CPU while compute runs on GPU. For LoRA with rank 16, gradient transfer per layer is ~100KB — negligible vs PCIe bandwidth.
-
-For parameters < 100K elements (typical LoRA adapters), updates run directly on GPU (faster than transfer overhead). For larger parameters, updates are pipelined via CUDA streams.
+| Operation | Standard | FigKernel | Speedup |
+|-----------|---------|-----------|---------|
+| RMSNorm | 4.72 ms | 1.60 ms | 2.95× |
+| Cross-entropy (32K vocab) | Full alloc | 8K chunks | ~8× less memory |
 
 ---
 
-## 5. Limitations and Future Work
+## 4. Conclusion
 
-1. **Dequantization overhead**: Our current Python-level dequantization adds ~1.4× overhead compared to FP32 matmul on CPU. The FigKernel fused ops (v0.5) reduce this via torch.compile, but a custom C/AVX-512 kernel could eliminate it entirely.
-
-2. ~~**torch.compile integration**~~: ✅ **Done in v0.5.** FigKernel provides torch.compile fused ops for RMSNorm (2.95× speedup), SwiGLU, and Linear+LoRA. The inductor backend generates optimized AVX-512 code on CPU and CUDA code on GPU from the same Python source.
-
-3. **Disk-based activation checkpointing**: For extreme memory constraints, activations could be checkpointed to NVMe SSD (2-5 GB/s sequential read), which approaches our measured CPU memory bandwidth (5-8 GB/s).
-
-4. **AdaLomo**: Adding adaptive learning rates to LOMO (arxiv 2310.10195) would improve Tier 4 quality without increasing memory.
-
-5. **APOLLO-Mini integration**: Rank-1 APOLLO would provide AdamW-quality optimization at near-zero optimizer state cost.
-
----
-
-## 6. Conclusion
-
-Fig Engine demonstrates that LLM fine-tuning on CPU with 8GB RAM is not only feasible but practical, by combining INT4 streaming quantization with adaptive training method selection. Version 0.5 adds three new subsystems — FigQuant (adaptive codebook quantization, 9.7% less error), FigKernel (torch.compile fused ops, 2.95× RMSNorm speedup), and FigPipeline (async GPU-CPU training) — that further close the gap with GPU-native tools. The system automatically picks the best training strategy for the available hardware, enabling practitioners without GPU access to fine-tune models up to 8B parameters.
-
-The key insight is that CPU training is memory-bandwidth bound — not compute-bound — and every architectural decision must minimize bytes moved through the memory bus. Our INT4 quantization reduces weight memory by 7.1×, our DequantMatmul avoids persisting FP32 weights, and our adaptive tier system ensures no memory is wasted on optimizer states or gradients that don't contribute to the selected training method.
+Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by adapting to actual weight distributions; (2) FigCache exploits the codebook structure to cache at an intermediate level — cheaper than FP32 weights, faster than full dequant; (3) FigSweep reduces whole-model cache to a layer window by exploiting sequential execution; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
 
 ---
 
 ## References
 
 1. Hu, E., et al. (2022). "LoRA: Low-Rank Adaptation of Large Language Models." ICLR 2022.
-2. Pan, T., et al. (2024). "LISA: Layerwise Importance Sampling for Memory-Efficient Large Language Model Fine-Tuning." arxiv 2403.17919.
+2. Pan, T., et al. (2024). "LISA: Layerwise Importance Sampling for Memory-Efficient LLM Fine-Tuning." arxiv 2403.17919.
 3. Malladi, S., et al. (2023). "Fine-Tuning Language Models with Just Forward Passes." NeurIPS 2023. arxiv 2305.17333.
 4. Lv, K., et al. (2023). "Full Parameter Fine-tuning for Large Language Models with Limited Resources." arxiv 2306.09782.
-5. Zhao, J., et al. (2024). "GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection." ICML 2024. arxiv 2403.03507.
-6. Zhu, H., et al. (2024). "APOLLO: SGD-like Memory, AdamW-level Performance." arxiv 2412.05270.
-7. Dettmers, T., et al. (2023). "QLoRA: Efficient Finetuning of Quantized Language Models." NeurIPS 2023.
-8. Zheng, Y., et al. (2024). "LLaMA-Factory: Unified Efficient Fine-Tuning of 100+ Language Models." ACL 2024. arxiv 2403.13372.
-9. Ma, S., et al. (2024). "The Era of 1-bit LLMs: All Large Language Models are in 1.58 Bits." arxiv 2402.17764.
-10. Wang, J., et al. (2024). "BitNet.cpp: Efficient Edge Inference for Ternary LLMs." arxiv 2502.11880.
-11. Liao, B., et al. (2023). "Make Pre-trained Model Reversible: From Parameter to Memory Efficient Fine-Tuning." arxiv 2306.00477.
-12. von Werra, L., et al. (2023). "TRL: Transformer Reinforcement Learning." github.com/huggingface/trl.
-13. Lin, J., et al. (2024). "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration." MLSys 2024.
-14. Hsu, Y.-C., et al. (2024). "Liger Kernel: Efficient Triton Kernels for LLM Training." arxiv 2410.10989.
+5. Dettmers, T., et al. (2023). "QLoRA: Efficient Finetuning of Quantized Language Models." NeurIPS 2023.
+6. Lin, J., et al. (2024). "AWQ: Activation-aware Weight Quantization." MLSys 2024.

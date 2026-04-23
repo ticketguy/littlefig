@@ -81,6 +81,11 @@ class FigTrainingConfig:
     # FigPipeline (GPU compute + CPU optimizer states)
     use_pipeline: bool = True  # Auto-use FigPipeline when GPU available
     
+    # Memory optimizations
+    activation_checkpointing: bool = True   # Recompute activations in backward (~70% activation savings)
+    use_adafactor: bool = False             # Adafactor instead of AdamW (~1000× less optimizer state per matrix)
+    cpu_bf16: bool = False                  # CPU BF16 autocast (2× memory reduction, no GPU needed)
+    
     # Output
     output_dir: str = "./checkpoints/fig_run"
     push_to_hub: bool = False
@@ -123,6 +128,52 @@ class FigTrainer:
             self.tier = select_tier(total_params)
         
         print(f"🍐 Training tier: {self.tier.value}")
+        
+        # Apply activation checkpointing
+        if config.activation_checkpointing:
+            self._apply_activation_checkpointing()
+        
+        if config.cpu_bf16:
+            print(f"🍐 CPU BF16 autocast enabled")
+        if config.use_adafactor:
+            print(f"🍐 Adafactor optimizer (factored 2nd moment, ~1000× less state)")
+    
+    def _apply_activation_checkpointing(self):
+        """Apply gradient checkpointing to transformer blocks.
+        Recomputes activations in backward instead of storing them.
+        ~70-80% activation memory savings at ~33% extra compute cost.
+        """
+        hf_model = self.model.model  # underlying HF model
+        
+        # Try HF's built-in gradient checkpointing first
+        if hasattr(hf_model, "gradient_checkpointing_enable"):
+            try:
+                hf_model.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": False}
+                )
+                print(f"🍐 Activation checkpointing enabled (HF native)")
+                return
+            except Exception:
+                pass
+        
+        # Fallback: torch.utils.checkpoint on transformer blocks
+        try:
+            import torch.utils.checkpoint as ckpt
+            count = 0
+            for name, module in hf_model.named_modules():
+                cls_name = module.__class__.__name__
+                if any(x in cls_name for x in ["DecoderLayer", "Block", "TransformerBlock"]):
+                    original_forward = module.forward
+                    def make_ckpt_forward(orig):
+                        def ckpt_forward(*args, **kwargs):
+                            return ckpt.checkpoint(orig, *args, use_reentrant=False, **kwargs)
+                        return ckpt_forward
+                    module.forward = make_ckpt_forward(original_forward)
+                    count += 1
+            if count > 0:
+                print(f"🍐 Activation checkpointing: {count} transformer blocks wrapped")
+        except Exception as e:
+            print(f"   ⚠ Activation checkpointing failed: {e}")
     
     def load_dataset(
         self,
@@ -408,13 +459,9 @@ class FigTrainer:
         if use_pipeline:
             return self._train_lora_pipeline()
 
-        # CPU path: standard AdamW
+        # CPU path: AdamW or Adafactor
         trainable_params = model.get_trainable_parameters()
-        optimizer = torch.optim.AdamW(
-            trainable_params,
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay,
-        )
+        optimizer = self._create_optimizer(trainable_params)
         
         # Learning rate scheduler
         total_steps = len(self.dataloader) * config.num_epochs // config.gradient_accumulation_steps
@@ -597,6 +644,29 @@ class FigTrainer:
         lomo.remove_hooks()
         self._save_checkpoint(model, global_step, "final")
     
+    def _create_optimizer(self, params):
+        """Create optimizer based on config. Adafactor or AdamW."""
+        config = self.config
+        if config.use_adafactor:
+            try:
+                from transformers.optimization import Adafactor
+                return Adafactor(
+                    params,
+                    lr=config.learning_rate,
+                    relative_step=False,
+                    scale_parameter=False,
+                    warmup_init=False,
+                    clip_threshold=1.0,
+                    weight_decay=config.weight_decay,
+                )
+            except ImportError:
+                print("   ⚠ Adafactor unavailable, falling back to AdamW")
+        return torch.optim.AdamW(
+            params,
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
+
     def _training_loop(
         self,
         model: FigModel,
@@ -605,8 +675,11 @@ class FigTrainer:
         tier_name: str,
         lisa_scheduler=None,
     ):
-        """Standard training loop for LoRA and LISA tiers."""
+        """Standard training loop for LoRA and LISA tiers.
+        Supports CPU BF16 autocast, Adafactor, and activation checkpointing.
+        """
         config = self.config
+        use_bf16 = config.cpu_bf16 and not torch.cuda.is_available()
         
         total_steps = len(self.dataloader) * config.num_epochs
         accum_steps = config.gradient_accumulation_steps
@@ -616,6 +689,8 @@ class FigTrainer:
         print(f"   Steps per epoch: {len(self.dataloader)}")
         print(f"   Effective batch: {config.effective_batch_size}")
         print(f"   Total optim steps: {total_steps // accum_steps}")
+        if use_bf16:
+            print(f"   BF16 autocast: enabled (CPU)")
         
         model.model.train()
         global_step = 0
@@ -631,21 +706,25 @@ class FigTrainer:
                 if lisa_scheduler is not None:
                     switched = lisa_scheduler.step(global_step)
                     if switched:
-                        # Rebuild optimizer with new trainable params
                         trainable_params = lisa_scheduler.get_trainable_params()
-                        optimizer = torch.optim.AdamW(
-                            trainable_params,
-                            lr=config.learning_rate,
-                            weight_decay=config.weight_decay,
-                        )
+                        optimizer = self._create_optimizer(trainable_params)
                 
-                # Forward
-                outputs = model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch.get("attention_mask"),
-                    labels=batch["labels"],
-                )
-                loss = outputs.loss / accum_steps
+                # Forward (with optional CPU BF16 autocast)
+                if use_bf16:
+                    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+                        outputs = model(
+                            input_ids=batch["input_ids"],
+                            attention_mask=batch.get("attention_mask"),
+                            labels=batch["labels"],
+                        )
+                        loss = outputs.loss / accum_steps
+                else:
+                    outputs = model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch.get("attention_mask"),
+                        labels=batch["labels"],
+                    )
+                    loss = outputs.loss / accum_steps
                 
                 # Backward
                 loss.backward()

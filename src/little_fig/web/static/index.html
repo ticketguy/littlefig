@@ -233,8 +233,34 @@ footer{display:none!important}
   <!-- ═══ CHECKPOINTS ═══ -->
   <div id="pg-ckpt" class="page hidden flex-1 overflow-y-auto p-6">
     <div class="max-w-4xl mx-auto space-y-6">
-      <div class="flex items-center justify-between"><div><h2 class="text-base font-bold text-fig-500">📦 Checkpoints</h2><p class="text-xs text-zinc-500 mt-1">Saved training checkpoints and adapters</p></div><button onclick="loadCkpts()" class="btn btn-ghost btn-sm">🔄 Refresh</button></div>
+      <div class="flex items-center justify-between"><div><h2 class="text-base font-bold text-fig-500">📦 Checkpoints & Export</h2><p class="text-xs text-zinc-500 mt-1">Manage adapters, merge models, push to Hub</p></div><button onclick="loadCkpts()" class="btn btn-ghost btn-sm">🔄 Refresh</button></div>
       <div id="ckpt-list" class="space-y-2"><div class="card text-center text-zinc-600 text-xs py-8">No checkpoints found. Train a model first.</div></div>
+      <!-- Push to Hub -->
+      <div class="card space-y-3">
+        <div class="text-xs font-bold text-fig-400">🚀 Push to HuggingFace Hub</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="text-[11px] text-zinc-500">HF Repo ID</label><input id="push-repo" class="input mt-1 text-xs" placeholder="username/my-model"></div>
+          <div><label class="text-[11px] text-zinc-500">Checkpoint Path</label><input id="push-path" class="input mt-1 text-xs" placeholder="./checkpoints/fig_run/checkpoint-final"></div>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-1.5 text-[11px] text-zinc-400 cursor-pointer"><input type="checkbox" id="push-private" class="accent-fig-500">Private</label>
+          <button onclick="pushToHub()" id="push-btn" class="btn btn-primary btn-sm">🚀 Push</button>
+          <span id="push-result" class="text-[11px] font-mono text-zinc-500"></span>
+        </div>
+      </div>
+      <!-- Export / Merge -->
+      <div class="card space-y-3">
+        <div class="text-xs font-bold text-fig-400">🔀 Merge & Export</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="text-[11px] text-zinc-500">Base Model</label><input id="exp-base" class="input mt-1 text-xs" placeholder="TinyLlama/TinyLlama-1.1B-Chat-v1.0"></div>
+          <div><label class="text-[11px] text-zinc-500">Adapter Path</label><input id="exp-adapter" class="input mt-1 text-xs" placeholder="./checkpoints/fig_run/checkpoint-final"></div>
+          <div><label class="text-[11px] text-zinc-500">Output Name</label><input id="exp-name" class="input mt-1 text-xs" value="merged_model"></div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="exportModel()" id="exp-btn" class="btn btn-primary btn-sm">🔀 Merge & Save</button>
+          <span id="exp-result" class="text-[11px] font-mono text-zinc-500"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -248,12 +274,199 @@ footer{display:none!important}
   </div>
 
   <!-- ═══ DOCS ═══ -->
-  <div id="pg-docs" class="page hidden flex-1 overflow-y-auto p-8">
-    <div class="max-w-3xl mx-auto space-y-8">
-      <div><h1 class="text-xl font-extrabold text-fig-500">📖 Little Fig Documentation</h1><p class="text-xs text-zinc-500 mt-1">v0.6 · FigQuant + FigKernel + FigPipeline + Ember</p></div>
-      <section class="space-y-3"><h2 class="text-sm font-bold">🚀 Quick Start</h2><ol class="text-xs text-zinc-400 space-y-1 ml-4 list-decimal"><li>Enter a HF model ID in the Chat sidebar (e.g. <code class="text-fig-500">Qwen/Qwen2.5-0.5B-Instruct</code>)</li><li>Click <b>Load</b> and wait for the status badge to turn green</li><li>Type a message and press Enter</li></ol></section>
-      <section class="space-y-3"><h2 class="text-sm font-bold">🔧 Engine Components</h2><div class="grid grid-cols-2 gap-3"><div class="card text-xs"><b class="text-fig-500">FigQuant</b><p class="text-zinc-500 text-[11px] mt-1">Adaptive codebook INT4 quantization. NF4 base refined via weighted k-means. 9.7% less MSE than standard INT4.</p></div><div class="card text-xs"><b class="text-fig-500">FigKernel</b><p class="text-zinc-500 text-[11px] mt-1">torch.compile fused ops: RMSNorm (2.95× faster), SwiGLU, chunked cross-entropy, fused Linear+LoRA.</p></div><div class="card text-xs"><b class="text-fig-500">FigPipeline</b><p class="text-zinc-500 text-[11px] mt-1">Async GPU-CPU training. Optimizer states on CPU, compute on GPU. Enables training models larger than VRAM.</p></div><div class="card text-xs"><b class="text-orange-400">Ember Memory</b><p class="text-zinc-500 text-[11px] mt-1">Cognitive memory token injection. Train models to store, recall, consolidate, and forget — embedded in weights.</p></div></div></section>
-      <section class="space-y-3"><h2 class="text-sm font-bold">🏋️ Training Tiers</h2><div class="text-xs text-zinc-400 space-y-1"><p><b class="text-fig-400">Tier 1: Streaming LoRA</b> — INT4 base + LoRA adapters. ~400MB for 1.1B. Good quality, fast.</p><p><b class="text-fig-400">Tier 2: LISA</b> — Rotating layer unfreezing. ~900MB for 1.1B. 10-35% better than LoRA.</p><p><b class="text-fig-400">Tier 3: MeZO</b> — Zeroth-order (no backward pass). ~600MB for 1.1B. Acceptable, slow.</p><p><b class="text-fig-400">Tier 4: LOMO</b> — Fused backward+update. ~800MB for 1.1B. Best quality, fast.</p></div></section>
+  <div id="pg-docs" class="page hidden flex-1 overflow-y-auto">
+    <!-- Docs sidebar nav -->
+    <div class="flex h-full">
+      <div class="w-48 border-r border-white/5 overflow-y-auto py-4 px-3 shrink-0 light:border-zinc-200">
+        <div class="label px-2 mb-2">Contents</div>
+        <div class="space-y-0.5 text-[11px]">
+          <a href="#doc-overview" class="block px-2 py-1.5 rounded text-fig-400 hover:bg-white/5">Overview</a>
+          <a href="#doc-figquant" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">FigQuant</a>
+          <a href="#doc-figkernel" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">FigKernel</a>
+          <a href="#doc-figpipeline" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">FigPipeline</a>
+          <a href="#doc-tiers" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">Training Tiers</a>
+          <a href="#doc-memory" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">Memory Optimizations</a>
+          <a href="#doc-ember" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">Ember Memory</a>
+          <a href="#doc-gguf" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">GGUF Loader</a>
+          <a href="#doc-api" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">Python API</a>
+          <a href="#doc-rest" class="block px-2 py-1.5 rounded text-zinc-500 hover:bg-white/5">REST API</a>
+        </div>
+      </div>
+      <div class="flex-1 overflow-y-auto p-8">
+        <div class="max-w-3xl mx-auto space-y-10">
+
+        <!-- Overview -->
+        <section id="doc-overview" class="space-y-3">
+          <h1 class="text-xl font-extrabold text-fig-500">Little Fig Documentation</h1>
+          <p class="text-sm text-zinc-400 leading-relaxed">Little Fig is a training and inference engine for large language models designed around one principle: <b class="text-zinc-200">fit in less RAM</b>. Standard LLM fine-tuning requires 16-32× the model's parameter count in memory. A 1.1B model needs ~27GB in FP32. Fig Engine brings that to ~400MB by combining adaptive INT4 quantization, fused compute kernels, and four training strategies that each optimize for different memory budgets.</p>
+          <p class="text-sm text-zinc-400 leading-relaxed">The engine also integrates <b class="text-orange-400">Ember's Diaries</b> — a cognitive memory database — directly into the training pipeline, allowing you to teach a model to store, recall, consolidate, and forget information using special tokens embedded in its vocabulary.</p>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- FigQuant -->
+        <section id="doc-figquant" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">FigQuant — Adaptive Codebook Quantization</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">FigQuant compresses model weights from 32-bit floats to 4-bit integers using a learned codebook. Unlike standard INT4 (which uses fixed min/max scaling) or NF4 (which assumes weights are normally distributed), FigQuant <b class="text-zinc-200">adapts its codebook to the actual weight distribution</b> of each layer.</p>
+          <div class="card space-y-2">
+            <div class="text-xs font-bold text-fig-400">How it works</div>
+            <ol class="text-[12px] text-zinc-400 space-y-1.5 ml-4 list-decimal leading-relaxed">
+              <li><b>Group weights</b> into blocks of 128 elements and compute per-group absmax scaling</li>
+              <li><b>Initialize codebook</b> from NF4 quantiles (16 values representing a normal distribution)</li>
+              <li><b>Refine via weighted k-means</b> — high-magnitude weights receive more importance (AWQ-inspired sensitivity weighting), pushing the codebook to allocate more precision where it matters most</li>
+              <li><b>Assign + pack</b> — each weight maps to the nearest codebook entry (4 bits), two per byte</li>
+              <li><b>Double quantization</b> — the per-group scale factors themselves are quantized to FP8, saving ~0.37 bits/param</li>
+            </ol>
+          </div>
+          <div class="card">
+            <div class="text-xs font-bold text-fig-400 mb-2">Quality (2048×768 matrix)</div>
+            <div class="grid grid-cols-2 gap-x-8 gap-y-1 text-[12px] font-mono">
+              <div class="text-zinc-500">Cosine similarity</div><div class="text-fig-400">0.9955</div>
+              <div class="text-zinc-500">MSE</div><div class="text-fig-400">0.0090</div>
+              <div class="text-zinc-500">SNR</div><div class="text-fig-400">20.5 dB</div>
+              <div class="text-zinc-500">Bits per parameter</div><div class="text-fig-400">4.31</div>
+              <div class="text-zinc-500">Compression</div><div class="text-fig-400">7.4×</div>
+            </div>
+          </div>
+          <p class="text-[12px] text-zinc-500">The dequantization path is fully vectorized using <code class="text-fig-400">torch.gather</code> and is compatible with <code class="text-fig-400">torch.compile</code> for additional speedup.</p>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- FigKernel -->
+        <section id="doc-figkernel" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">FigKernel — Fused Operations</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">FigKernel provides fused operations that reduce memory traffic and speed up computation. Unlike Triton kernels (GPU-only), these are written in standard PyTorch and compiled by <code class="text-fig-400">torch.compile(backend="inductor")</code> — generating optimized AVX-512 code on CPU and CUDA code on GPU from the same source.</p>
+          <div class="space-y-3">
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigRMSNorm</div><p class="text-[12px] text-zinc-400 mt-1">Fuses variance computation, rsqrt, and scale into one pass. Saves only <code>inv_rms</code> per row for backward (scalar) instead of the full normalized tensor. <b class="text-zinc-300">2.95× faster</b> than standard PyTorch RMSNorm. Auto-swapped into models at load time.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigCrossEntropy</div><p class="text-[12px] text-zinc-400 mt-1">Chunked cross-entropy that never materializes the full <code>[seq_len, vocab_size]</code> logit tensor. For a 128K vocabulary, this avoids a 512KB allocation <em>per token</em>. Processes the vocabulary in 8K chunks using numerically stable running logsumexp. <b class="text-zinc-300">~8× less peak memory</b>.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigSwiGLU</div><p class="text-[12px] text-zinc-400 mt-1">Fused gate + up + SiLU activation. The inductor backend merges the two linear projections and activation into a single vectorized pass, saving one full hidden-state-sized activation per layer.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">fig_fused_linear_lora</div><p class="text-[12px] text-zinc-400 mt-1">The critical path: <code>F.linear(x, W) + (x @ A) @ B * scale</code> compiled into one kernel. Every FigLinear forward pass uses this when cached weights are available. Zero overhead from LoRA on the fused path.</p></div>
+          </div>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- FigPipeline -->
+        <section id="doc-figpipeline" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">FigPipeline — GPU-CPU Async Training</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">When a GPU is available, FigPipeline keeps optimizer states (AdamW's <code>exp_avg</code> and <code>exp_avg_sq</code>) on CPU while running forward and backward passes on GPU. This enables training models that exceed GPU VRAM.</p>
+          <div class="card space-y-2">
+            <div class="text-xs font-bold text-fig-400">Architecture</div>
+            <div class="text-[12px] text-zinc-400 space-y-1 leading-relaxed">
+              <p><b class="text-zinc-300">Small parameters (&lt;100K elements)</b> — updated directly on GPU. The overhead of transferring to CPU exceeds the cost of running AdamW on GPU. LoRA adapters (rank 16 × hidden_dim) always take this path.</p>
+              <p><b class="text-zinc-300">Large parameters (&gt;100K elements)</b> — gradients transferred to CPU via async CUDA streams, AdamW update runs on CPU, updated weights sent back. Overlapped with the next layer's forward computation.</p>
+            </div>
+          </div>
+          <p class="text-[12px] text-zinc-500">For LoRA training (rank 16), gradient transfer per layer is ~100KB — negligible vs PCIe bandwidth. FigPipeline is auto-enabled when GPU is detected and <code>use_pipeline=True</code> in training config.</p>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- Training Tiers -->
+        <section id="doc-tiers" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">Training Tiers</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">Fig Engine automatically selects the best training strategy based on available RAM. The system budgets 70% of free memory (30% headroom for OS) and picks the highest-quality tier that fits.</p>
+          <div class="space-y-3">
+            <div class="card"><div class="flex items-center gap-2"><span class="badge badge-green">Tier 1</span><b class="text-xs">Streaming LoRA</b></div><p class="text-[12px] text-zinc-400 mt-2">FigQuant INT4 base weights + FP32 low-rank adapters. Only the LoRA matrices (A and B) are trainable — typically 1-3% of total parameters. Base weights dequantize on-the-fly during forward/backward. <b class="text-zinc-300">~400MB</b> for a 1.1B model. The default and fastest tier.</p><p class="text-[11px] text-zinc-600 mt-1">Reference: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models" (ICLR 2022)</p></div>
+            <div class="card"><div class="flex items-center gap-2"><span class="badge badge-green">Tier 2</span><b class="text-xs">LISA</b></div><p class="text-[12px] text-zinc-400 mt-2">Layerwise Importance Sampled AdamW. Observes that LoRA disproportionately updates embedding and head layers (100× more than middle layers). LISA freezes all but γ randomly sampled middle layers every K steps, achieving <b class="text-zinc-300">10-35% better quality</b> than LoRA. <b class="text-zinc-300">~900MB</b> for 1.1B.</p><p class="text-[11px] text-zinc-600 mt-1">Reference: Pan et al., arxiv 2403.17919 (2024)</p></div>
+            <div class="card"><div class="flex items-center gap-2"><span class="badge badge-amber">Tier 3</span><b class="text-xs">MeZO</b></div><p class="text-[12px] text-zinc-400 mt-2">Memory-efficient Zeroth-Order optimization. Eliminates backpropagation entirely — estimates gradients via two forward passes with random perturbation. Memory equals inference cost. Acceptable quality on most tasks, but slow (2× forward passes per step). <b class="text-zinc-300">~600MB</b> for 1.1B.</p><p class="text-[11px] text-zinc-600 mt-1">Reference: Malladi et al., "Fine-Tuning LLMs with Just Forward Passes" (NeurIPS 2023)</p></div>
+            <div class="card"><div class="flex items-center gap-2"><span class="badge badge-green">Tier 4</span><b class="text-xs">LOMO</b></div><p class="text-[12px] text-zinc-400 mt-2">Low-Memory Optimization. Fuses gradient computation with parameter updates during backpropagation — maintains only one gradient tensor at any time (O(1) gradient memory). Enables full-parameter training at near-LoRA memory cost. <b class="text-zinc-300">Best quality</b>, ~800MB for 1.1B.</p><p class="text-[11px] text-zinc-600 mt-1">Reference: Lv et al., arxiv 2306.09782 (2023)</p></div>
+          </div>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- Memory Optimizations -->
+        <section id="doc-memory" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">Memory Optimizations</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">Beyond the training tiers, Fig Engine provides three additional memory optimizations that can be combined with any tier.</p>
+          <div class="space-y-3">
+            <div class="card"><div class="text-xs font-bold text-fig-400">Activation Checkpointing</div><p class="text-[12px] text-zinc-400 mt-1">Recomputes intermediate activations during the backward pass instead of storing them. Saves ~70-80% of activation memory at the cost of ~33% extra compute. Enabled by default via <code class="text-fig-400">activation_checkpointing=True</code>. Uses HuggingFace's native gradient checkpointing when available, falls back to <code>torch.utils.checkpoint</code> with <code>use_reentrant=False</code>.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">Adafactor Optimizer</div><p class="text-[12px] text-zinc-400 mt-1">Replaces AdamW with Adafactor, which factorizes the second moment matrix into row and column vectors. For a 1024×1024 matrix, this reduces optimizer state from ~2M elements to ~2K elements — <b class="text-zinc-300">1000× reduction per matrix</b>. Enable via <code class="text-fig-400">use_adafactor=True</code>. Quality is comparable to AdamW on most tasks.</p><p class="text-[11px] text-zinc-600 mt-1">Reference: Shazeer & Stern, "Adafactor: Adaptive Learning Rates with Sublinear Memory Cost" (ICML 2018)</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">CPU BF16 Autocast</div><p class="text-[12px] text-zinc-400 mt-1">Runs forward and backward passes in bfloat16 on CPU. BF16 has the same dynamic range as FP32 (8 exponent bits) so no gradient scaler is needed, unlike FP16. Halves activation memory during compute. Enable via <code class="text-fig-400">cpu_bf16=True</code>. Gradients accumulate in FP32 automatically.</p></div>
+          </div>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- Ember -->
+        <section id="doc-ember" class="space-y-4">
+          <h2 class="text-base font-bold text-orange-400">Ember Memory Integration</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">Ember's Diaries is a cognitive database engine built on the principle that <em>nothing is ever deleted</em>. Little Fig integrates Ember by injecting 9 special tokens into the model's vocabulary and training it to perform memory operations as part of its text generation.</p>
+          <div class="card">
+            <div class="text-xs font-bold text-orange-400 mb-2">Memory Tokens</div>
+            <div class="grid grid-cols-2 gap-1 text-[12px] font-mono">
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_store|&gt;</code></div><div class="text-zinc-400">Persist information to memory</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_recall|&gt;</code></div><div class="text-zinc-400">Search and retrieve from memory</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_consolidate|&gt;</code></div><div class="text-zinc-400">Merge related memories (sensory→long-term)</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_forget|&gt;</code></div><div class="text-zinc-400">Flag decayed memories (Ebbinghaus curves)</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_conflict|&gt;</code></div><div class="text-zinc-400">Detect and track contradictions</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_episode|&gt;</code></div><div class="text-zinc-400">Mark conversation episode boundaries</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|mem_reflect|&gt;</code></div><div class="text-zinc-400">Metacognitive self-reflection</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|memory_start|&gt;</code></div><div class="text-zinc-400">Begin memory operation block</div>
+              <div class="text-zinc-500"><code class="text-orange-400">&lt;|memory_end|&gt;</code></div><div class="text-zinc-400">End memory operation block</div>
+            </div>
+          </div>
+          <p class="text-[12px] text-zinc-400 leading-relaxed">When <code class="text-fig-400">ember_mode=True</code>, the model's tokenizer is extended with these tokens and its embedding layer is resized. The <code class="text-fig-400">load_ember_dataset()</code> method generates synthetic training examples where the model must decide when to store, what to recall, how to consolidate, and when to flag decayed or conflicting memories.</p>
+          <p class="text-[12px] text-zinc-500">The trained model can then operate its own Ember's Diaries instance — it's not RAG (external retrieval), it's cognitive memory built into the model's weights.</p>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- GGUF -->
+        <section id="doc-gguf" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">Universal GGUF Loader</h2>
+          <p class="text-sm text-zinc-400 leading-relaxed">Little Fig can load any <code>.gguf</code> file automatically — no hardcoded architecture mappings. Three loading strategies are tried in order:</p>
+          <ol class="text-[12px] text-zinc-400 space-y-1 ml-4 list-decimal">
+            <li><b class="text-zinc-300">transformers built-in</b> — covers 22+ architectures natively</li>
+            <li><b class="text-zinc-300">gguf-py TensorNameMap</b> — falls back to gguf-py's knowledge of 122+ architectures</li>
+            <li><b class="text-zinc-300">Heuristic direct loading</b> — downloads HF config from Hub, builds GGUF→HF name map by convention</li>
+          </ol>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- Python API -->
+        <section id="doc-api" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">Python API Reference</h2>
+          <div class="space-y-3">
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigModel.from_pretrained(model_name, ...)</div><p class="text-[12px] text-zinc-400 mt-1">Load a HuggingFace model with FigQuant INT4 + LoRA adapters. Key params: <code>lora_r</code>, <code>lora_alpha</code>, <code>tier</code>, <code>ember_mode</code>, <code>fuse_kernels</code>, <code>fast</code> (cached vs on-the-fly dequant), <code>compile_model</code>.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigTrainer(model, config)</div><p class="text-[12px] text-zinc-400 mt-1">Unified trainer. Methods: <code>load_dataset(source)</code>, <code>load_ember_dataset(n_examples)</code>, <code>train()</code>. Auto-selects tier and uses FigPipeline when GPU available.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigTrainingConfig</div><p class="text-[12px] text-zinc-400 mt-1">Training configuration. Key params: <code>tier</code>, <code>num_epochs</code>, <code>learning_rate</code>, <code>max_seq_length</code>, <code>activation_checkpointing</code>, <code>use_adafactor</code>, <code>cpu_bf16</code>, <code>use_pipeline</code>, <code>push_to_hub</code>.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigModel.save_adapter(path) / load_adapter(path)</div><p class="text-[12px] text-zinc-400 mt-1">Save/load only LoRA adapter weights (~5MB). The adapter file is portable — share it without the full base model.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigModel.merge_and_export(path)</div><p class="text-[12px] text-zinc-400 mt-1">Merge LoRA adapters into base weights and save as a standard HuggingFace model. Ready for inference or push to Hub.</p></div>
+            <div class="card"><div class="text-xs font-bold text-fig-400">FigModel.push_to_hub(repo_id)</div><p class="text-[12px] text-zinc-400 mt-1">Push trained model to HuggingFace Hub. Can push merged model or adapter-only.</p></div>
+          </div>
+        </section>
+
+        <div class="divider"></div>
+
+        <!-- REST API -->
+        <section id="doc-rest" class="space-y-4">
+          <h2 class="text-base font-bold text-fig-500">REST API</h2>
+          <p class="text-sm text-zinc-400">The web server exposes these endpoints at <code class="text-fig-400">http://localhost:8888</code>:</p>
+          <div class="card overflow-x-auto">
+            <table class="text-[11px] w-full">
+              <thead><tr class="text-zinc-500 border-b border-white/5"><th class="text-left py-1.5 pr-3">Method</th><th class="text-left py-1.5 pr-3">Endpoint</th><th class="text-left py-1.5">Description</th></tr></thead>
+              <tbody class="text-zinc-400">
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-green-400">GET</td><td class="pr-3 font-mono">/api/health</td><td>Hardware info, version, model status</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/model/load</td><td>Load a model by HF ID or path</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/model/push</td><td>Push checkpoint to HuggingFace Hub</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/model/export</td><td>Merge adapter + save locally</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/train/start</td><td>Start training in background</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-green-400">GET</td><td class="pr-3 font-mono">/api/train/status</td><td>Check if training is running</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/bench/run</td><td>Run live FigQuant + FigKernel benchmarks</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-blue-400">POST</td><td class="pr-3 font-mono">/api/ember/generate-training-data</td><td>Generate Ember memory training examples</td></tr>
+                <tr class="border-b border-white/5"><td class="py-1.5 pr-3 font-mono text-green-400">GET</td><td class="pr-3 font-mono">/api/checkpoints</td><td>List saved checkpoints</td></tr>
+                <tr><td class="py-1.5 pr-3 font-mono text-purple-400">WS</td><td class="pr-3 font-mono">/api/chat</td><td>Streaming chat via WebSocket</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        </div>
+      </div>
     </div>
   </div>
 
@@ -316,6 +529,21 @@ function copyChat(){navigator.clipboard.writeText(hist.map(m=>`${m.role}: ${m.co
 
 // ── Ember ────────────────────────────────────────────────────────────────────
 async function genEmberData(){$('#ember-gen-btn').disabled=true;$('#ember-result').textContent='Generating…';try{const r=await fetch('/api/ember/generate-training-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({n_examples:parseInt($('#ember-n').value)})});const d=await r.json();$('#ember-result').innerHTML=r.ok?`<span class="text-orange-400">✓ ${d.n_examples} examples → ${d.path}</span>`:`<span class="text-red-400">✗ ${d.detail}</span>`}catch(e){$('#ember-result').innerHTML=`<span class="text-red-400">✗ ${e.message}</span>`}$('#ember-gen-btn').disabled=false}
+
+// ── Push to Hub + Export ─────────────────────────────────────────────────────
+async function pushToHub(){
+  const btn=$('#push-btn');btn.disabled=true;$('#push-result').textContent='Pushing…';
+  try{const r=await fetch('/api/model/push',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({repo_id:$('#push-repo').value,checkpoint_path:$('#push-path').value,private:$('#push-private').checked})});
+    const d=await r.json();$('#push-result').innerHTML=r.ok?`<span class="text-fig-400">✓ <a href="${d.url}" class="underline" target="_blank">${d.url}</a></span>`:`<span class="text-red-400">✗ ${d.detail}</span>`
+  }catch(e){$('#push-result').innerHTML=`<span class="text-red-400">✗ ${e.message}</span>`}btn.disabled=false}
+
+async function exportModel(){
+  const btn=$('#exp-btn');btn.disabled=true;$('#exp-result').textContent='Merging…';
+  try{const r=await fetch('/api/model/export',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({base_model:$('#exp-base').value,adapter_path:$('#exp-adapter').value,output_name:$('#exp-name').value})});
+    const d=await r.json();$('#exp-result').innerHTML=r.ok?`<span class="text-fig-400">✓ ${d.path} (${d.size_mb}MB)</span>`:`<span class="text-red-400">✗ ${d.detail}</span>`
+  }catch(e){$('#exp-result').innerHTML=`<span class="text-red-400">✗ ${e.message}</span>`}btn.disabled=false}
 
 // ── Checkpoints ──────────────────────────────────────────────────────────────
 async function loadCkpts(){try{const r=await fetch('/api/checkpoints');const d=await r.json();if(!d.checkpoints||!d.checkpoints.length){$('#ckpt-list').innerHTML='<div class="card text-center text-zinc-600 text-xs py-8">No checkpoints found. Train a model first.</div>';return}$('#ckpt-list').innerHTML=d.checkpoints.map(c=>`<div class="card flex items-center justify-between"><div><div class="text-xs font-bold text-fig-400">${c.name}</div><div class="text-[10px] text-zinc-600 font-mono mt-0.5">${c.size_human} · Step ${c.step||'?'} · ${c.tier||'?'}</div></div><div class="text-[10px] text-zinc-600">${c.created?.split('T')[0]||''}</div></div>`).join('')}catch(e){$('#ckpt-list').innerHTML='<div class="card text-center text-red-400 text-xs py-4">Error loading checkpoints</div>'}}

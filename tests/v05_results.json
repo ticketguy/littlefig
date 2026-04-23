@@ -1,32 +1,32 @@
 {
   "figquant_quality": {
-    "cosine_similarity": 0.9955102205276489,
-    "mse": 0.009019766934216022,
-    "max_error": 0.39971351623535156,
-    "snr_db": 20.449274699168765,
+    "cosine_similarity": 0.9955068230628967,
+    "mse": 0.00902651622891426,
+    "max_error": 0.407623291015625,
+    "snr_db": 20.444401476837125,
     "bits_per_param": 4.3128662109375,
     "compression_ratio": 7.419659788853981
   },
   "figquant_vs_fig4": {
-    "figquant_cosine": 0.9955147504806519,
-    "figquant_mse": 0.009016080759465694,
-    "figquant_snr": 20.452851223323382,
+    "figquant_cosine": 0.9954955577850342,
+    "figquant_mse": 0.009020441211760044,
+    "figquant_snr": 20.442316690019947,
     "baseline_cosine": 0.995,
     "baseline_mse": 0.01
   },
   "bench_quant": {
-    "figquant_quantize_ms": 906.5146479988471,
-    "figquant_dequantize_ms": 5.167147202882916
+    "figquant_quantize_ms": 887.1713334228843,
+    "figquant_dequantize_ms": 6.675546278711408
   },
   "bench_fused": {
-    "rmsnorm_standard_ms": 2.6921914890408516,
-    "rmsnorm_fig_ms": 1.3341995887458324,
-    "ce_standard_ms": 108.65997852524742,
-    "ce_chunked_ms": 155.97401198465377
+    "rmsnorm_standard_ms": 3.7673457991331816,
+    "rmsnorm_fig_ms": 1.288111216854304,
+    "ce_standard_ms": 100.221787893679,
+    "ce_chunked_ms": 143.11493689892814
   },
   "bench_linear": {
-    "nn_linear_ms": 3.6317148129455745,
-    "figlinear_fast_ms": 5.116821906995028,
-    "figlinear_lowram_ms": 9.684906713664532
+    "nn_linear_ms": 3.6453539971262217,
+    "figlinear_fast_ms": 4.603828594554216,
+    "figlinear_lowram_ms": 9.684756200294942
   }
 }

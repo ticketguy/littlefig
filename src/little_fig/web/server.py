@@ -253,6 +253,78 @@ async def ember_status():
         return {"available": False, "install": "pip install embers-diaries"}
 
 
+# ── Push to Hub ───────────────────────────────────────────────────────────────
+
+@app.post("/api/model/push")
+async def push_to_hub(body: dict):
+    """Push the latest checkpoint or loaded model to HuggingFace Hub."""
+    repo_id = body.get("repo_id", "").strip()
+    if not repo_id:
+        raise HTTPException(400, "repo_id required (e.g. 'username/my-model')")
+
+    private = body.get("private", False)
+    checkpoint_path = body.get("checkpoint_path", "").strip()
+    merge = body.get("merge", True)
+
+    _log(f"🚀 Pushing to Hub: {repo_id}")
+
+    try:
+        if checkpoint_path:
+            # Push a specific checkpoint adapter
+            from huggingface_hub import HfApi
+            api = HfApi()
+            api.create_repo(repo_id, exist_ok=True, private=private)
+            api.upload_folder(
+                folder_path=checkpoint_path,
+                repo_id=repo_id,
+                commit_message=f"Upload adapter from {os.path.basename(checkpoint_path)}",
+            )
+            _log(f"✓ Adapter pushed to https://huggingface.co/{repo_id}")
+            return {"status": "pushed", "url": f"https://huggingface.co/{repo_id}", "type": "adapter"}
+        else:
+            raise HTTPException(400, "checkpoint_path required")
+
+    except Exception as e:
+        _log(f"✗ Push failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/model/export")
+async def export_model(body: dict):
+    """Merge LoRA adapter into base model and save locally."""
+    base_model = body.get("base_model", "").strip()
+    adapter_path = body.get("adapter_path", "").strip()
+    output_name = body.get("output_name", "merged_model").strip()
+
+    if not base_model or not adapter_path:
+        raise HTTPException(400, "base_model and adapter_path required")
+
+    output_dir = str(Path(os.getcwd()) / "merged_models" / output_name)
+
+    _log(f"🔀 Merging adapter into {base_model}...")
+
+    try:
+        from little_fig.engine.model import FigModel
+        from little_fig.engine.tier import TrainingTier
+
+        fig = FigModel.from_pretrained(base_model, lora_r=16, lora_alpha=32)
+        fig.load_adapter(adapter_path)
+        fig.merge_and_export(output_dir)
+
+        size_mb = sum(
+            os.path.getsize(os.path.join(output_dir, f))
+            for f in os.listdir(output_dir)
+            if os.path.isfile(os.path.join(output_dir, f))
+        ) / (1024 ** 2)
+
+        _log(f"✓ Merged model saved: {output_dir} ({size_mb:.0f} MB)")
+        return {"status": "exported", "path": output_dir, "size_mb": round(size_mb)}
+
+    except Exception as e:
+        _log(f"✗ Export failed: {e}")
+        raise HTTPException(500, str(e))
+
+
 # ── Checkpoints ───────────────────────────────────────────────────────────────
 
 @app.get("/api/checkpoints")

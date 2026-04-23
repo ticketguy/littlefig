@@ -8,7 +8,7 @@
 
 ## Abstract
 
-We present **Fig Engine**, a system for fine-tuning large language models entirely on CPU with minimal RAM. Fig Engine combines five components: (1) **FigQuant**, an adaptive codebook INT4 quantization that refines NF4 quantiles via sensitivity-weighted k-means — measured at 1.4% lower MSE than fixed NF4 and 24.9% lower MSE than uniform absmax INT4 across 12 tensor configurations (4 shapes × 3 seeds); (2) **FigCache**, a three-tier caching strategy that trades between memory and speed by caching unpacked codebook indices instead of full FP32 weights — 75% less memory at 1.3× the speed of no-cache; (3) **FigKernel**, torch.compile fused operations for RMSNorm (2.95× speedup), SwiGLU, cross-entropy, and linear+LoRA; (4) **FigSweep**, a rolling layer-window strategy that dequantizes only a subset of layers at a time during sequential forward passes; and (5) **Ember integration**, which trains cognitive memory operations directly into model weights via special tokens.
+We present **Fig Engine**, a system for fine-tuning large language models entirely on CPU with minimal RAM. Fig Engine combines five components: (1) **FigQuant**, an adaptive codebook INT4 quantization that refines NF4 quantiles via k-means — measured at 5.3% lower MSE than fixed NF4 and 57.0% lower MSE than uniform absmax INT4 across all 50 weight matrices in GPT-2, winning every layer; (2) **FigCache**, a three-tier caching strategy that trades between memory and speed by caching unpacked codebook indices instead of full FP32 weights — 75% less memory at 1.3× the speed of no-cache; (3) **FigKernel**, torch.compile fused operations for RMSNorm (2.95× speedup), SwiGLU, cross-entropy, and linear+LoRA; (4) **FigSweep**, a rolling layer-window strategy that dequantizes only a subset of layers at a time during sequential forward passes; and (5) **Ember integration**, which trains cognitive memory operations directly into model weights via special tokens.
 
 Fig Engine fine-tunes GPT-2 (124M) using 45.8 MB for base weights and projects TinyLlama (1.1B) at ~400 MB — an order of magnitude below the 26.6 GB required by standard FP32+AdamW.
 
@@ -22,7 +22,7 @@ The fundamental bottleneck on CPU is **memory bandwidth** (5-8 GB/s), not comput
 
 ### Contributions
 
-1. **FigQuant**: Adaptive codebook INT4 quantization with sensitivity-weighted k-means refinement and double quantization. 0.9956 cosine similarity (measured avg over 12 runs), 7.4× compression.
+1. **FigQuant**: Adaptive codebook INT4 quantization with k-means refinement and double quantization. 0.9948 cosine similarity on GPT-2 real weights (50 layers), 5.3% less MSE than NF4 on every layer, 7.4× compression.
 
 2. **FigCache**: A three-mode caching strategy (fast/figcache/lowram) where the middle mode caches unpacked uint8 codebook indices — 75% less memory than full FP32 cache, 1.3× faster than full dequant. This exploits FigQuant's codebook structure: bit-unpacking is 60% of dequant cost and can be amortized.
 
@@ -42,23 +42,23 @@ The fundamental bottleneck on CPU is **memory bandwidth** (5-8 GB/s), not comput
 
 Adaptive codebook INT4 quantization with three techniques:
 
-1. **Adaptive codebook**: Initialize from NF4 quantiles (16 values from N(0,1)), then refine via weighted k-means on the actual weight distribution. This captures heavy tails and layer-specific distributions that a fixed codebook misses.
+1. **Adaptive codebook**: Initialize from NF4 quantiles (16 values from N(0,1)), then refine via k-means on the actual weight distribution. This captures heavy tails and layer-specific distributions that a fixed codebook misses.
 
-2. **Sensitivity weighting**: High-magnitude weights receive more importance during k-means. Quantizing large weights poorly destroys accuracy disproportionately (AWQ insight applied to codebook construction).
+2. **Double quantization**: Per-group scale factors quantized to FP8, saving ~0.37 bits/param.
 
-3. **Double quantization**: Per-group scale factors quantized to FP8, saving ~0.37 bits/param.
+Note: sensitivity weighting (upweighting high-magnitude values during k-means) was tested and found to hurt quality — it pulls the codebook toward outliers at the expense of the dense center. Uniform weighting during k-means produces consistently better results on real model weights.
 
 **Dequantization**: `codebook[indices] × per_group_scale`. The codebook lookup uses `torch.gather` for vectorized operation, compatible with `torch.compile`.
 
-Measured on random normal tensors (4 shapes × 3 seeds = 12 runs, group_size=128):
+Measured on all 50 weight matrices in GPT-2 (124M), group_size=128:
 
 | Method | Cosine Sim | MSE | SNR (dB) |
 |--------|-----------|-----|----------|
-| **FigQuant** | **0.9956** | **0.0090** | **20.5** |
-| NF4 (fixed codebook) | 0.9956 | 0.0091 | 20.4 |
-| Absmax INT4 (uniform) | 0.9945 | 0.0120 | 19.2 |
+| **FigQuant** | **0.9948** | **1.768e-4** | **19.8** |
+| NF4 (fixed codebook) | 0.9946 | 1.866e-4 | 19.6 |
+| Absmax INT4 (uniform) | 0.9883 | 4.114e-4 | 17.1 |
 
-FigQuant vs NF4: **1.4% lower MSE**, +0.06 dB SNR. FigQuant vs Absmax INT4: **24.9% lower MSE**, +1.24 dB SNR. The NF4 gap is modest on synthetic normal data because NF4's codebook is designed for N(0,1); the adaptive codebook provides larger gains on real model weights with skewed distributions and outliers.
+FigQuant vs NF4: **5.3% lower MSE**, +0.2 dB SNR — FigQuant wins on **50/50 layers**. FigQuant vs Absmax INT4: **57.0% lower MSE**, +2.7 dB SNR. The adaptive codebook captures layer-specific weight distributions (skew, heavy tails, outliers) that a fixed NF4 codebook misses.
 
 ### 2.2 FigCache
 
@@ -119,19 +119,19 @@ The training data generator produces synthetic examples across 7 memory operatio
 
 ## 3. Experimental Results
 
-### 3.1 FigQuant vs Baselines
+### 3.1 FigQuant vs Baselines (GPT-2 Real Weights)
 
-All three methods measured on the same tensors with identical group_size=128. Values are averages across 3 seeds per shape.
+All three methods measured on every 2D weight matrix in GPT-2 (50 layers), group_size=128. Real NF4 uses the same fixed codebook that FigQuant initializes from but with zero refinement. Absmax INT4 uses 16 uniformly-spaced levels.
 
-| Shape | FigQuant MSE | NF4 MSE | Absmax MSE | FigQuant vs NF4 |
-|-------|-------------|---------|------------|-----------------|
-| 768 × 768 | 0.00901 | 0.00914 | 0.01199 | −1.4% |
-| 2048 × 768 | 0.00902 | 0.00914 | 0.01201 | −1.4% |
-| 2048 × 2048 | 0.00901 | 0.00914 | 0.01199 | −1.4% |
-| 2048 × 5632 | 0.00900 | 0.00914 | 0.01197 | −1.5% |
-| **Average** | **0.00901** | **0.00914** | **0.01199** | **−1.4%** |
+| Layer type | FigQuant MSE | NF4 MSE | FQ wins |
+|-----------|-------------|---------|---------|
+| Embeddings (wte, wpe) | 1.57e-4 | 1.75e-4 | 2/2 |
+| Attention (c_attn, c_proj) | 1.83e-4 | 1.94e-4 | 24/24 |
+| MLP (c_fc, c_proj) | 1.68e-4 | 1.74e-4 | 24/24 |
+| **All layers** | **1.768e-4** | **1.866e-4** | **50/50** |
 
-FigQuant cosine similarity: 0.9956 avg. NF4: 0.9956. Absmax INT4: 0.9945.
+FigQuant vs NF4: **5.3% less MSE**, +0.2 dB SNR, higher cosine on every layer.
+FigQuant vs Absmax INT4: **57.0% less MSE**, +2.7 dB SNR.
 
 ### 3.2 FigCache Benchmark (768→2048, seq=128)
 
@@ -171,7 +171,7 @@ FigCache produces **zero numerical error** vs fast mode — the output is bit-id
 
 ## 4. Conclusion
 
-Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by adapting to actual weight distributions; (2) FigCache exploits the codebook structure to cache at an intermediate level — cheaper than FP32 weights, faster than full dequant; (3) FigSweep reduces whole-model cache to a layer window by exploiting sequential execution; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
+Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by 5.3% vs NF4 on real model weights (50/50 layers), by fitting the codebook to each layer's actual distribution via k-means; (2) FigCache exploits the codebook structure to cache at an intermediate level — cheaper than FP32 weights, faster than full dequant; (3) FigSweep reduces whole-model cache to a layer window by exploiting sequential execution; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
 
 ---
 

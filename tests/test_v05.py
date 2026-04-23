@@ -195,66 +195,69 @@ def _measure_quality_raw(original: torch.Tensor, dequantized: torch.Tensor) -> d
 def test_figquant_vs_baselines():
     """Measure FigQuant quality against real NF4 and absmax INT4 baselines.
 
-    All three methods are run on the same tensors with the same group_size.
-    No hardcoded baseline numbers — everything is measured.
+    Runs all three methods on every 2D weight in GPT-2 (50 layers).
+    No hardcoded baseline numbers — everything is measured on real model weights.
     """
     from little_fig.engine.figquant import figquant_quantize, measure_quality
 
-    group_size = 128
-    shapes = [(768, 768), (2048, 768), (2048, 2048), (2048, 5632)]
-    seeds = [0, 42, 123]
+    try:
+        from transformers import AutoModelForCausalLM
+    except ImportError:
+        print("    ⚠ Skipping: transformers not installed")
+        return
 
+    print("    Loading GPT-2 for real-weight comparison...")
+    model = AutoModelForCausalLM.from_pretrained("gpt2")
+
+    group_size = 128
     totals = {
         "figquant": {"cos": 0.0, "mse": 0.0, "snr": 0.0},
         "nf4":      {"cos": 0.0, "mse": 0.0, "snr": 0.0},
         "absmax":   {"cos": 0.0, "mse": 0.0, "snr": 0.0},
     }
-    n_runs = 0
+    n_layers = 0
+    fq_wins = 0
 
-    print(f"    {'Shape':>12}  {'Seed':>4}  {'Method':>10}  {'Cosine':>9}  {'MSE':>10}  {'SNR (dB)':>8}")
-    print(f"    {'-'*12}  {'-'*4}  {'-'*10}  {'-'*9}  {'-'*10}  {'-'*8}")
+    for name, param in model.named_parameters():
+        if param.ndim != 2 or param.numel() < 1024:
+            continue
 
-    for shape in shapes:
-        for seed in seeds:
-            torch.manual_seed(seed)
-            W = torch.randn(shape)
+        W = param.data.float()
 
-            # FigQuant (adaptive codebook + sensitivity weighting)
-            q_fq = figquant_quantize(W, group_size=group_size, n_iters=8, sensitivity_weight=True)
-            qual_fq = measure_quality(W, q_fq)
+        # FigQuant (adaptive codebook, no sensitivity weighting)
+        q_fq = figquant_quantize(W, group_size=group_size, n_iters=8)
+        qual_fq = measure_quality(W, q_fq)
 
-            # Real NF4 (fixed codebook, no refinement)
-            W_nf4 = _nf4_quantize_dequantize(W, group_size=group_size)
-            qual_nf4 = _measure_quality_raw(W, W_nf4)
+        # Real NF4 (fixed codebook, no refinement)
+        W_nf4 = _nf4_quantize_dequantize(W, group_size=group_size)
+        qual_nf4 = _measure_quality_raw(W, W_nf4)
 
-            # Real absmax INT4 (uniform 16 levels)
-            W_abs = _absmax_int4_quantize_dequantize(W, group_size=group_size)
-            qual_abs = _measure_quality_raw(W, W_abs)
+        # Real absmax INT4 (uniform 16 levels)
+        W_abs = _absmax_int4_quantize_dequantize(W, group_size=group_size)
+        qual_abs = _measure_quality_raw(W, W_abs)
 
-            for tag, q in [("FigQuant", qual_fq), ("NF4", qual_nf4), ("AbsmaxI4", qual_abs)]:
-                print(f"    {str(shape):>12}  {seed:>4}  {tag:>10}  {q['cosine_similarity']:.6f}  {q['mse']:.6e}  {q['snr_db']:.1f}")
+        for k, q in [("figquant", qual_fq), ("nf4", qual_nf4), ("absmax", qual_abs)]:
+            totals[k]["cos"] += q["cosine_similarity"]
+            totals[k]["mse"] += q["mse"]
+            totals[k]["snr"] += q["snr_db"]
 
-            key_map = {"figquant": qual_fq, "nf4": qual_nf4, "absmax": qual_abs}
-            for k, q in key_map.items():
-                totals[k]["cos"] += q["cosine_similarity"]
-                totals[k]["mse"] += q["mse"]
-                totals[k]["snr"] += q["snr_db"]
-            n_runs += 1
-            print()
+        if qual_fq["mse"] < qual_nf4["mse"]:
+            fq_wins += 1
+        n_layers += 1
 
     # Averages
     avgs = {}
     for method in totals:
-        avgs[method] = {k: v / n_runs for k, v in totals[method].items()}
+        avgs[method] = {k: v / n_layers for k, v in totals[method].items()}
 
-    print(f"    {'AVERAGES':>12}  {'':>4}  {'Method':>10}  {'Cosine':>9}  {'MSE':>10}  {'SNR (dB)':>8}")
-    print(f"    {'-'*12}  {'-'*4}  {'-'*10}  {'-'*9}  {'-'*10}  {'-'*8}")
+    print(f"\n    AVERAGES ({n_layers} layers, GPT-2 real weights)")
+    print(f"    {'Method':>10}  {'Cosine':>9}  {'MSE':>12}  {'SNR (dB)':>8}")
+    print(f"    {'-'*10}  {'-'*9}  {'-'*12}  {'-'*8}")
     for method in ["figquant", "nf4", "absmax"]:
         a = avgs[method]
         label = {"figquant": "FigQuant", "nf4": "NF4", "absmax": "AbsmaxI4"}[method]
-        print(f"    {'':>12}  {'':>4}  {label:>10}  {a['cos']:.6f}  {a['mse']:.6e}  {a['snr']:.1f}")
+        print(f"    {label:>10}  {a['cos']:.6f}  {a['mse']:.6e}  {a['snr']:.1f}")
 
-    # Improvement over NF4
     mse_vs_nf4 = (avgs["nf4"]["mse"] - avgs["figquant"]["mse"]) / avgs["nf4"]["mse"] * 100
     mse_vs_abs = (avgs["absmax"]["mse"] - avgs["figquant"]["mse"]) / avgs["absmax"]["mse"] * 100
     snr_vs_nf4 = avgs["figquant"]["snr"] - avgs["nf4"]["snr"]
@@ -263,12 +266,15 @@ def test_figquant_vs_baselines():
     print(f"\n    Higher cosine & SNR = better.  Lower MSE = better.")
     print(f"    FigQuant vs NF4:       {mse_vs_nf4:.1f}% less MSE  (+{snr_vs_nf4:.2f} dB SNR)")
     print(f"    FigQuant vs AbsmaxI4:  {mse_vs_abs:.1f}% less MSE  (+{snr_vs_abs:.2f} dB SNR)")
+    print(f"    FigQuant wins {fq_wins}/{n_layers} layers")
 
     # Assert FigQuant beats NF4 on average
     assert avgs["figquant"]["mse"] < avgs["nf4"]["mse"], \
-        f"FigQuant MSE ({avgs['figquant']['mse']:.6f}) should be lower than NF4 ({avgs['nf4']['mse']:.6f})"
+        f"FigQuant MSE ({avgs['figquant']['mse']:.6e}) should be lower than NF4 ({avgs['nf4']['mse']:.6e})"
     assert avgs["figquant"]["cos"] > avgs["nf4"]["cos"], \
         f"FigQuant cosine ({avgs['figquant']['cos']:.6f}) should exceed NF4 ({avgs['nf4']['cos']:.6f})"
+    assert fq_wins == n_layers, \
+        f"FigQuant should win every layer, won {fq_wins}/{n_layers}"
 
     RESULTS['figquant_vs_baselines'] = {
         'averages': avgs,
@@ -276,9 +282,8 @@ def test_figquant_vs_baselines():
         'mse_reduction_vs_absmax_pct': mse_vs_abs,
         'snr_gain_vs_nf4_db': snr_vs_nf4,
         'snr_gain_vs_absmax_db': snr_vs_abs,
-        'n_shapes': len(shapes),
-        'n_seeds': len(seeds),
-        'n_runs': n_runs,
+        'n_layers': n_layers,
+        'fq_wins_vs_nf4': fq_wins,
     }
 
 

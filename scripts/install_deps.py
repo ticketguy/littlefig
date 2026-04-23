@@ -88,10 +88,10 @@ def install_gpu():
 
 
 def install_train_deps():
-    print("\n── Installing training deps (peft, datasets, trl) ───────────")
+    print("\n── Installing training deps (datasets, embers-diaries) ──────")
     run([
         sys.executable, "-m", "pip", "install",
-        "peft>=0.9.0", "datasets>=2.18.0", "trl>=0.8.0",
+        "datasets>=2.18.0", "embers-diaries",
     ])
 
 

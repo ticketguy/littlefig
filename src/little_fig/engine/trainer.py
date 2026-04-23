@@ -81,10 +81,10 @@ class FigTrainingConfig:
     # FigPipeline (GPU compute + CPU optimizer states)
     use_pipeline: bool = True  # Auto-use FigPipeline when GPU available
     
-    # Memory optimizations
+    # Fig Memory Optimizations
     activation_checkpointing: bool = True   # Recompute activations in backward (~70% activation savings)
-    use_adafactor: bool = False             # Adafactor instead of AdamW (~1000× less optimizer state per matrix)
-    cpu_bf16: bool = False                  # CPU BF16 autocast (2× memory reduction, no GPU needed)
+    memory_mode: str = "fast"               # "fast" (FP32 cache), "figcache" (75% less), "lowram" (min memory)
+    figsweep_window: int = 0                # FigSweep rolling window (0=disabled, >0=window size)
     
     # Output
     output_dir: str = "./checkpoints/fig_run"
@@ -133,10 +133,11 @@ class FigTrainer:
         if config.activation_checkpointing:
             self._apply_activation_checkpointing()
         
-        if config.cpu_bf16:
-            print(f"🍐 CPU BF16 autocast enabled")
-        if config.use_adafactor:
-            print(f"🍐 Adafactor optimizer (factored 2nd moment, ~1000× less state)")
+        # Apply Fig memory mode
+        if config.figsweep_window > 0:
+            model.enable_figsweep(window_size=config.figsweep_window)
+        elif config.memory_mode != "fast":
+            model.set_memory_mode(config.memory_mode)
     
     def _apply_activation_checkpointing(self):
         """Apply gradient checkpointing to transformer blocks.
@@ -459,9 +460,13 @@ class FigTrainer:
         if use_pipeline:
             return self._train_lora_pipeline()
 
-        # CPU path: AdamW or Adafactor
+        # CPU path: AdamW
         trainable_params = model.get_trainable_parameters()
-        optimizer = self._create_optimizer(trainable_params)
+        optimizer = torch.optim.AdamW(
+            trainable_params,
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+        )
         
         # Learning rate scheduler
         total_steps = len(self.dataloader) * config.num_epochs // config.gradient_accumulation_steps
@@ -644,29 +649,6 @@ class FigTrainer:
         lomo.remove_hooks()
         self._save_checkpoint(model, global_step, "final")
     
-    def _create_optimizer(self, params):
-        """Create optimizer based on config. Adafactor or AdamW."""
-        config = self.config
-        if config.use_adafactor:
-            try:
-                from transformers.optimization import Adafactor
-                return Adafactor(
-                    params,
-                    lr=config.learning_rate,
-                    relative_step=False,
-                    scale_parameter=False,
-                    warmup_init=False,
-                    clip_threshold=1.0,
-                    weight_decay=config.weight_decay,
-                )
-            except ImportError:
-                print("   ⚠ Adafactor unavailable, falling back to AdamW")
-        return torch.optim.AdamW(
-            params,
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay,
-        )
-
     def _training_loop(
         self,
         model: FigModel,
@@ -676,10 +658,8 @@ class FigTrainer:
         lisa_scheduler=None,
     ):
         """Standard training loop for LoRA and LISA tiers.
-        Supports CPU BF16 autocast, Adafactor, and activation checkpointing.
         """
         config = self.config
-        use_bf16 = config.cpu_bf16 and not torch.cuda.is_available()
         
         total_steps = len(self.dataloader) * config.num_epochs
         accum_steps = config.gradient_accumulation_steps
@@ -689,8 +669,6 @@ class FigTrainer:
         print(f"   Steps per epoch: {len(self.dataloader)}")
         print(f"   Effective batch: {config.effective_batch_size}")
         print(f"   Total optim steps: {total_steps // accum_steps}")
-        if use_bf16:
-            print(f"   BF16 autocast: enabled (CPU)")
         
         model.model.train()
         global_step = 0
@@ -707,24 +685,19 @@ class FigTrainer:
                     switched = lisa_scheduler.step(global_step)
                     if switched:
                         trainable_params = lisa_scheduler.get_trainable_params()
-                        optimizer = self._create_optimizer(trainable_params)
-                
-                # Forward (with optional CPU BF16 autocast)
-                if use_bf16:
-                    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-                        outputs = model(
-                            input_ids=batch["input_ids"],
-                            attention_mask=batch.get("attention_mask"),
-                            labels=batch["labels"],
+                        optimizer = torch.optim.AdamW(
+                            trainable_params,
+                            lr=config.learning_rate,
+                            weight_decay=config.weight_decay,
                         )
-                        loss = outputs.loss / accum_steps
-                else:
-                    outputs = model(
-                        input_ids=batch["input_ids"],
-                        attention_mask=batch.get("attention_mask"),
-                        labels=batch["labels"],
-                    )
-                    loss = outputs.loss / accum_steps
+                
+                # Forward
+                outputs = model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch.get("attention_mask"),
+                    labels=batch["labels"],
+                )
+                loss = outputs.loss / accum_steps
                 
                 # Backward
                 loss.backward()

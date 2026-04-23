@@ -2,7 +2,7 @@
 
 **CPU-native LLM training engine with embedded cognitive memory.**  
 Fine-tune language models on machines with no GPU — even with just 8GB RAM.  
-Train models with Ember's Diaries cognitive memory built into their weights.
+Train models with [Ember's Diaries](https://github.com/ticketguy/embers-diaries) cognitive memory built into their weights.
 
 [![Tests](https://img.shields.io/badge/tests-21%2F21%20passing-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.9+-blue)]()
@@ -10,15 +10,7 @@ Train models with Ember's Diaries cognitive memory built into their weights.
 
 ---
 
-## What this is
-
-Little Fig is a toolkit for fine-tuning and running LLMs entirely on CPU. While tools like Unsloth, Axolotl, and LLaMA-Factory require GPUs with CUDA, Little Fig is built from the ground up for the opposite constraint: **no GPU, no cloud, full local control.**
-
-The system is also designed to embed [Ember's Diaries](https://github.com/ticketguy/embers-diaries) — a cognitive memory database — directly into LLM weights, making models that can store, recall, consolidate, and forget.
-
 ## Engine Stack
-
-Little Fig is powered by four layers that work together:
 
 | Layer | Module | What it does |
 |-------|--------|-------------|
@@ -26,18 +18,18 @@ Little Fig is powered by four layers that work together:
 | **Compute** | FigKernel | torch.compile fused ops (2.95× faster RMSNorm, fused LoRA) |
 | **Training** | 4 Tiers | LoRA, LISA, MeZO, LOMO — auto-selected by available RAM |
 | **Optimizer** | FigPipeline | Async GPU-CPU training with CPU-resident optimizer states |
-| **Memory** | Ember Integration | Cognitive memory tokens + training data for embedded memory |
+| **Memory** | Ember | Cognitive memory tokens + training data for embedded memory |
 
 ## What's possible
 
-| Task | Model | RAM Needed | Reality |
-|------|-------|-----------|---------|
-| Fine-tune (LoRA) | GPT-2 124M | ~350 MB | ✓ Fast |
-| Fine-tune (LoRA) | TinyLlama 1.1B | ~400 MB | ✓ Minutes/epoch |
-| Fine-tune (LISA) | Gemma 4B | ~3.2 GB | ✓ Feasible |
-| Fine-tune (LoRA) | Llama 3.1 8B | ~3 GB | ✓ Feasible |
-| Inference (GGUF Q4) | Any model | ~model size | ✓ Auto-detects arch |
-| Ember memory training | Any model | +tokens overhead | ✓ 9 memory operations |
+| Task | Model | RAM Needed |
+|------|-------|-----------|
+| Fine-tune (LoRA) | GPT-2 124M | ~350 MB |
+| Fine-tune (LoRA) | TinyLlama 1.1B | ~400 MB |
+| Fine-tune (LISA) | Gemma 4B | ~3.2 GB |
+| Fine-tune (LoRA) | Llama 3.1 8B | ~3 GB |
+| Inference (GGUF Q4) | Any model | ~model size |
+| Ember memory training | Any model | +tokens overhead |
 
 ---
 
@@ -107,61 +99,7 @@ trainer.train()
 ```bash
 little-fig
 # Opens at http://localhost:8888
-# Chat, train, benchmark, manage checkpoints — all in browser
 ```
-
----
-
-## v0.6 — What's New
-
-### FigQuant → Primary Quantization Engine
-
-FigQuant adaptive codebook quantization is now the **only** quantization engine. It replaces the old FIG4 format throughout the entire stack.
-
-| Method | Cosine Sim | MSE | SNR (dB) | Bits/param |
-|--------|-----------|-----|----------|------------|
-| **FigQuant** | **0.9955** | **0.0090** | **20.5** | 4.31 |
-| NF4 (QLoRA baseline) | ~0.995 | ~0.010 | ~20.0 | 4.00 |
-
-### FigKernel → Wired into Model Loading
-
-FigKernel fused operations are now automatically applied when loading a model:
-- **FigRMSNorm** replaces all `RMSNorm` modules at load time (2.95× faster)
-- **fig_fused_linear_lora** is used in every FigLinear forward pass
-- Works on CPU (AVX-512) and GPU (CUDA) from the same source code
-
-### FigPipeline → Wired into Trainer
-
-When GPU is available, FigTrainer automatically uses FigPipeline:
-- Optimizer states (exp_avg, exp_avg_sq) live on CPU
-- Forward + backward runs on GPU
-- For LoRA, gradient transfer is ~100KB/layer — negligible
-
-### Ember Memory → Full Integration
-
-Ember's Diaries cognitive memory system is now fully integrated:
-- `ember_mode=True` in `FigModel.from_pretrained()` injects 9 memory tokens
-- `FigTrainer.load_ember_dataset()` generates + loads memory training data
-- Memory tokens, training data generator, and chat manager exported from engine
-- Web UI has dedicated Ember page for training data generation
-
-### Custom Web UI
-
-A custom FastAPI + HTML/JS UI replaces the old Gradio-based studio:
-- Professional dark/light theme with labeled sidebar navigation
-- Chat with WebSocket streaming
-- Training studio with config panel + live monitor
-- Ember memory training page
-- FigSpace arena for model comparison
-- Benchmarks dashboard
-- Checkpoints manager
-- Terminal with live log streaming
-
-### Dead Code Removed
-
-- Gradio studio (`studio/`) — removed entirely
-- Old FIG4 quantizer (`engine/quantize.py`) — replaced by FigQuant
-- Legacy PEFT-based trainer (`trainer.py`) — replaced by Fig Engine trainer
 
 ---
 
@@ -171,42 +109,27 @@ A custom FastAPI + HTML/JS UI replaces the old Gradio-based studio:
 src/little_fig/
 ├── __init__.py              # Entry point + hardware detection
 ├── model.py                 # HF + GGUF universal inference
-├── engine/                  # ⭐ Fig Engine (v0.6)
-│   ├── figquant.py          # FigQuant: adaptive codebook INT4 (PRIMARY)
+├── engine/
+│   ├── figquant.py          # FigQuant: adaptive codebook INT4
 │   ├── figkernel.py         # Fused ops: RMSNorm, SwiGLU, CE, Linear+LoRA
 │   ├── figpipeline.py       # Async GPU-CPU training pipeline
-│   ├── linear.py            # FigLinear: FigQuant base + LoRA (uses FigKernel)
-│   ├── model.py             # FigModel: streaming loader (FigQuant + FigKernel)
-│   ├── trainer.py           # FigTrainer: unified loop (FigPipeline + Ember)
-│   ├── ember_integration.py # 🔥 Ember memory tokens + training data + chat
+│   ├── linear.py            # FigLinear: FigQuant base + LoRA
+│   ├── model.py             # FigModel: streaming loader
+│   ├── trainer.py           # FigTrainer: unified training loop
+│   ├── ember_integration.py # Ember memory tokens + training data
 │   ├── tier.py              # Tier selection + memory estimation
 │   ├── lisa.py              # LISA scheduler
 │   ├── mezo.py              # MeZO optimizer
 │   ├── lomo.py              # LOMO optimizer
 │   ├── packing.py           # Sequence packing
-│   └── gguf_loader.py       # Universal GGUF loader (auto-detects any arch)
-├── web/                     # Custom FastAPI + HTML/JS UI
+│   └── gguf_loader.py       # Universal GGUF loader
+├── web/
 │   ├── server.py            # REST API + WebSocket endpoints
-│   └── static/index.html    # Production frontend
+│   └── static/index.html    # Frontend
 └── tests/
-    ├── test_engine.py       # Core tests (12/12 passing)
-    └── test_v05.py          # FigQuant/FigKernel/FigPipeline tests (9/9 passing)
+    ├── test_engine.py       # 12 tests
+    └── test_v05.py          # 9 tests
 ```
-
----
-
-## Comparison with Other Tools
-
-| Feature | Little Fig | Unsloth | LLaMA-Factory | TRL |
-|---------|-----------|---------|---------------|-----|
-| CPU training | ✅ Native | ❌ GPU-only | ⚠️ Slow fallback | ⚠️ Slow fallback |
-| Min RAM (1.1B) | **~400 MB** | ~6 GB (GPU) | ~8 GB | ~8 GB |
-| GGUF loading | ✅ Universal | ❌ | ❌ | ❌ |
-| Fused ops | ✅ torch.compile | ✅ Triton | ❌ | ❌ |
-| Cognitive memory | ✅ Ember | ❌ | ❌ | ❌ |
-| Training tiers | 4 (auto) | 1 (LoRA) | Multiple | Multiple |
-| Custom UI | ✅ FastAPI | ❌ | ✅ | ❌ |
-| GPU support | ✅ FigPipeline | ✅ | ✅ | ✅ |
 
 ---
 
@@ -216,26 +139,6 @@ See [`paper/fig_engine.md`](paper/fig_engine.md) for the full technical paper.
 
 ---
 
-## Roadmap
-
-- [x] FigQuant adaptive codebook quantization (primary engine)
-- [x] FigKernel fused ops wired into model loading
-- [x] FigPipeline wired into trainer
-- [x] Ember memory integration (tokens + training data + chat)
-- [x] Custom FastAPI web UI (no Gradio)
-- [x] Full test suite (21/21 passing)
-- [ ] APOLLO-Mini optimizer
-- [ ] Disk-based activation checkpointing
-- [ ] Push-to-Hub from web UI
-- [ ] Live benchmark execution in UI
-
----
-
 ## License
 
 MIT
-
----
-
-Built for [Lila](https://github.com/ticketguy/Lila) — a private family ASI assistant.  
-Designed by Sammie (@ticketguy).

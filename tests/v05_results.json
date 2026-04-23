@@ -1,32 +1,51 @@
 {
   "figquant_quality": {
-    "cosine_similarity": 0.995516300201416,
-    "mse": 0.009011663496494293,
-    "max_error": 0.40240979194641113,
-    "snr_db": 20.45620545699737,
+    "cosine_similarity": 0.9955296516418457,
+    "mse": 0.008988592773675919,
+    "max_error": 0.40749406814575195,
+    "snr_db": 20.466725645992337,
     "bits_per_param": 4.3128662109375,
     "compression_ratio": 7.419659788853981
   },
-  "figquant_vs_fig4": {
-    "figquant_cosine": 0.995526134967804,
-    "figquant_mse": 0.008975272066891193,
-    "figquant_snr": 20.46773209953686,
-    "baseline_cosine": 0.995,
-    "baseline_mse": 0.01
+  "figquant_vs_baselines": {
+    "averages": {
+      "figquant": {
+        "cos": 0.9956122785806656,
+        "mse": 0.009008265022809306,
+        "snr": 20.45614215492274
+      },
+      "nf4": {
+        "cos": 0.9955979784329733,
+        "mse": 0.009138531206796566,
+        "snr": 20.393788845459266
+      },
+      "absmax": {
+        "cos": 0.9944963206847509,
+        "mse": 0.011991153083120784,
+        "snr": 19.21394629872942
+      }
+    },
+    "mse_reduction_vs_nf4_pct": 1.425460843098916,
+    "mse_reduction_vs_absmax_pct": 24.875739969580636,
+    "snr_gain_vs_nf4_db": 0.06235330946347517,
+    "snr_gain_vs_absmax_db": 1.2421958561933195,
+    "n_shapes": 4,
+    "n_seeds": 3,
+    "n_runs": 12
   },
   "bench_quant": {
-    "figquant_quantize_ms": 926.0339846136048,
-    "figquant_dequantize_ms": 8.369635290000588
+    "figquant_quantize_ms": 935.6778307002969,
+    "figquant_dequantize_ms": 6.577374701737426
   },
   "bench_fused": {
-    "rmsnorm_standard_ms": 1.367945282254368,
-    "rmsnorm_fig_ms": 0.9583573904819787,
-    "ce_standard_ms": 112.86821040557697,
-    "ce_chunked_ms": 172.97402851982042
+    "rmsnorm_standard_ms": 1.9758066002395935,
+    "rmsnorm_fig_ms": 1.2636371990083717,
+    "ce_standard_ms": 110.88184209802421,
+    "ce_chunked_ms": 170.02558509848313
   },
   "bench_linear": {
-    "nn_linear_ms": 3.3134549972601235,
-    "figlinear_fast_ms": 3.7981809000484645,
-    "figlinear_lowram_ms": 8.810917800292373
+    "nn_linear_ms": 4.766559800191317,
+    "figlinear_fast_ms": 5.27510319952853,
+    "figlinear_lowram_ms": 12.288676400203258
   }
 }

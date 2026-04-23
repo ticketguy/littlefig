@@ -8,7 +8,7 @@
 
 ## Abstract
 
-We present **Fig Engine**, a system for fine-tuning large language models entirely on CPU with minimal RAM. Fig Engine combines five components: (1) **FigQuant**, an adaptive codebook INT4 quantization that refines NF4 quantiles via sensitivity-weighted k-means, achieving 9.7% less MSE than standard INT4; (2) **FigCache**, a three-tier caching strategy that trades between memory and speed by caching unpacked codebook indices instead of full FP32 weights — 75% less memory at 1.3× the speed of no-cache; (3) **FigKernel**, torch.compile fused operations for RMSNorm (2.95× speedup), SwiGLU, cross-entropy, and linear+LoRA; (4) **FigSweep**, a rolling layer-window strategy that dequantizes only a subset of layers at a time during sequential forward passes; and (5) **Ember integration**, which trains cognitive memory operations directly into model weights via special tokens.
+We present **Fig Engine**, a system for fine-tuning large language models entirely on CPU with minimal RAM. Fig Engine combines five components: (1) **FigQuant**, an adaptive codebook INT4 quantization that refines NF4 quantiles via sensitivity-weighted k-means — measured at 1.4% lower MSE than fixed NF4 and 24.9% lower MSE than uniform absmax INT4 across 12 tensor configurations (4 shapes × 3 seeds); (2) **FigCache**, a three-tier caching strategy that trades between memory and speed by caching unpacked codebook indices instead of full FP32 weights — 75% less memory at 1.3× the speed of no-cache; (3) **FigKernel**, torch.compile fused operations for RMSNorm (2.95× speedup), SwiGLU, cross-entropy, and linear+LoRA; (4) **FigSweep**, a rolling layer-window strategy that dequantizes only a subset of layers at a time during sequential forward passes; and (5) **Ember integration**, which trains cognitive memory operations directly into model weights via special tokens.
 
 Fig Engine fine-tunes GPT-2 (124M) using 45.8 MB for base weights and projects TinyLlama (1.1B) at ~400 MB — an order of magnitude below the 26.6 GB required by standard FP32+AdamW.
 
@@ -22,7 +22,7 @@ The fundamental bottleneck on CPU is **memory bandwidth** (5-8 GB/s), not comput
 
 ### Contributions
 
-1. **FigQuant**: Adaptive codebook INT4 quantization with sensitivity-weighted k-means refinement and double quantization. 0.9955 cosine similarity, 7.4× compression.
+1. **FigQuant**: Adaptive codebook INT4 quantization with sensitivity-weighted k-means refinement and double quantization. 0.9956 cosine similarity (measured avg over 12 runs), 7.4× compression.
 
 2. **FigCache**: A three-mode caching strategy (fast/figcache/lowram) where the middle mode caches unpacked uint8 codebook indices — 75% less memory than full FP32 cache, 1.3× faster than full dequant. This exploits FigQuant's codebook structure: bit-unpacking is 60% of dequant cost and can be amortized.
 
@@ -50,10 +50,15 @@ Adaptive codebook INT4 quantization with three techniques:
 
 **Dequantization**: `codebook[indices] × per_group_scale`. The codebook lookup uses `torch.gather` for vectorized operation, compatible with `torch.compile`.
 
-| Method | Cosine Sim | MSE | Bits/param |
-|--------|-----------|-----|------------|
-| **FigQuant** | **0.9955** | **0.0090** | 4.31 |
-| Standard INT4 | 0.9951 | 0.0100 | 4.16 |
+Measured on random normal tensors (4 shapes × 3 seeds = 12 runs, group_size=128):
+
+| Method | Cosine Sim | MSE | SNR (dB) |
+|--------|-----------|-----|----------|
+| **FigQuant** | **0.9956** | **0.0090** | **20.5** |
+| NF4 (fixed codebook) | 0.9956 | 0.0091 | 20.4 |
+| Absmax INT4 (uniform) | 0.9945 | 0.0120 | 19.2 |
+
+FigQuant vs NF4: **1.4% lower MSE**, +0.06 dB SNR. FigQuant vs Absmax INT4: **24.9% lower MSE**, +1.24 dB SNR. The NF4 gap is modest on synthetic normal data because NF4's codebook is designed for N(0,1); the adaptive codebook provides larger gains on real model weights with skewed distributions and outliers.
 
 ### 2.2 FigCache
 
@@ -114,14 +119,19 @@ The training data generator produces synthetic examples across 7 memory operatio
 
 ## 3. Experimental Results
 
-### 3.1 FigQuant Quality
+### 3.1 FigQuant vs Baselines
 
-| Weight Shape | Cosine Sim | MSE | Compression |
-|-------------|-----------|------|-------------|
-| 768 × 768 | 0.9950 | 0.0100 | 7.4× |
-| 768 × 3072 | 0.9951 | 0.0099 | 7.4× |
-| 2048 × 2048 | 0.9952 | 0.0099 | 7.4× |
-| 2048 × 5632 | 0.9960 | 0.0090 | 7.4× |
+All three methods measured on the same tensors with identical group_size=128. Values are averages across 3 seeds per shape.
+
+| Shape | FigQuant MSE | NF4 MSE | Absmax MSE | FigQuant vs NF4 |
+|-------|-------------|---------|------------|-----------------|
+| 768 × 768 | 0.00901 | 0.00914 | 0.01199 | −1.4% |
+| 2048 × 768 | 0.00902 | 0.00914 | 0.01201 | −1.4% |
+| 2048 × 2048 | 0.00901 | 0.00914 | 0.01199 | −1.4% |
+| 2048 × 5632 | 0.00900 | 0.00914 | 0.01197 | −1.5% |
+| **Average** | **0.00901** | **0.00914** | **0.01199** | **−1.4%** |
+
+FigQuant cosine similarity: 0.9956 avg. NF4: 0.9956. Absmax INT4: 0.9945.
 
 ### 3.2 FigCache Benchmark (768→2048, seq=128)
 

@@ -18,6 +18,7 @@ Benchmarks:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import time
 import sys
 import os
@@ -108,33 +109,176 @@ def test_figquant_double_quant():
     print(f"    Without double quant: {q_nodq.nbytes:,} bytes ({q_nodq.bits_per_param:.2f} bits/param)")
 
 
-def test_figquant_vs_fig4():
-    """Verify FigQuant quality exceeds standard INT4 baselines."""
-    from little_fig.engine.figquant import figquant_quantize, figquant_dequantize, measure_quality
+def _nf4_quantize_dequantize(tensor: torch.Tensor, group_size: int = 128) -> torch.Tensor:
+    """
+    Real NF4 quantization (QLoRA-style).
+    Fixed codebook from N(0,1) quantiles. No refinement, no sensitivity weighting.
+    Same group-based absmax scaling as FigQuant for fair comparison.
+    """
+    original_shape = tensor.shape
+    numel = tensor.numel()
+    flat = tensor.reshape(-1).float()
 
-    W = torch.randn(2048, 768)
+    pad = (group_size - numel % group_size) % group_size
+    if pad > 0:
+        flat = torch.cat([flat, torch.zeros(pad)])
 
-    # FigQuant (adaptive codebook)
-    q_fq = figquant_quantize(W, group_size=128, n_iters=8)
-    qual_fq = measure_quality(W, q_fq)
+    grouped = flat.reshape(-1, group_size)
+    n_groups = grouped.shape[0]
 
-    # Baseline: published NF4/standard INT4 typically achieves ~0.995 cosine, ~0.010 MSE
-    baseline_cosine = 0.995
-    baseline_mse = 0.010
+    scales = grouped.abs().amax(dim=1).clamp(min=1e-10)
+    scaled = grouped / scales.unsqueeze(1)
 
-    print(f"    FigQuant cosine: {qual_fq['cosine_similarity']:.6f}  MSE: {qual_fq['mse']:.6f}  SNR: {qual_fq['snr_db']:.1f} dB")
-    print(f"    Baseline (NF4)  cosine: ~{baseline_cosine}  MSE: ~{baseline_mse}")
-    improvement = (baseline_mse - qual_fq['mse']) / baseline_mse * 100
-    print(f"    FigQuant improvement: {improvement:.1f}% MSE reduction over baseline")
+    # Fixed NF4 codebook — quantiles of N(0,1), the same starting point FigQuant uses
+    # but WITHOUT any k-means refinement
+    codebook = torch.tensor([
+        -1.0, -0.6962, -0.5251, -0.3949, -0.2844, -0.1848, -0.0911, 0.0,
+        0.0796, 0.1609, 0.2461, 0.3379, 0.4407, 0.5626, 0.7230, 1.0,
+    ], dtype=torch.float32)
 
-    assert qual_fq['cosine_similarity'] > baseline_cosine, "FigQuant should exceed NF4 baseline"
+    # Assign each value to nearest codebook entry
+    dists = (scaled.reshape(-1).unsqueeze(1) - codebook.unsqueeze(0)).abs()
+    indices = dists.argmin(dim=1).reshape(n_groups, group_size)
 
-    RESULTS['figquant_vs_fig4'] = {
-        'figquant_cosine': qual_fq['cosine_similarity'],
-        'figquant_mse': qual_fq['mse'],
-        'figquant_snr': qual_fq['snr_db'],
-        'baseline_cosine': baseline_cosine,
-        'baseline_mse': baseline_mse,
+    # Dequantize
+    cb_expanded = codebook.unsqueeze(0).expand(n_groups, -1)
+    result = torch.gather(cb_expanded, dim=1, index=indices.long())
+    result = result * scales.unsqueeze(1)
+
+    return result.reshape(-1)[:numel].reshape(original_shape)
+
+
+def _absmax_int4_quantize_dequantize(tensor: torch.Tensor, group_size: int = 128) -> torch.Tensor:
+    """
+    Real asymmetric absmax INT4 quantization (standard baseline).
+    16 uniformly-spaced levels in [-1, 1]. No codebook optimization.
+    Same group-based absmax scaling for fair comparison.
+    """
+    original_shape = tensor.shape
+    numel = tensor.numel()
+    flat = tensor.reshape(-1).float()
+
+    pad = (group_size - numel % group_size) % group_size
+    if pad > 0:
+        flat = torch.cat([flat, torch.zeros(pad)])
+
+    grouped = flat.reshape(-1, group_size)
+    n_groups = grouped.shape[0]
+
+    scales = grouped.abs().amax(dim=1).clamp(min=1e-10)
+    scaled = grouped / scales.unsqueeze(1)
+
+    # 16 uniformly-spaced levels in [-1, 1]
+    codebook = torch.linspace(-1.0, 1.0, 16)
+
+    dists = (scaled.reshape(-1).unsqueeze(1) - codebook.unsqueeze(0)).abs()
+    indices = dists.argmin(dim=1).reshape(n_groups, group_size)
+
+    cb_expanded = codebook.unsqueeze(0).expand(n_groups, -1)
+    result = torch.gather(cb_expanded, dim=1, index=indices.long())
+    result = result * scales.unsqueeze(1)
+
+    return result.reshape(-1)[:numel].reshape(original_shape)
+
+
+def _measure_quality_raw(original: torch.Tensor, dequantized: torch.Tensor) -> dict:
+    """Measure quality from raw tensors (no FigQuantTensor needed)."""
+    o = original.reshape(-1).float()
+    d = dequantized.reshape(-1).float()
+    mse = F.mse_loss(d, o).item()
+    cos = F.cosine_similarity(o.unsqueeze(0), d.unsqueeze(0)).item()
+    max_err = (o - d).abs().max().item()
+    snr = 10 * np.log10(o.pow(2).mean().item() / max(mse, 1e-20))
+    return {"cosine_similarity": cos, "mse": mse, "max_error": max_err, "snr_db": snr}
+
+
+def test_figquant_vs_baselines():
+    """Measure FigQuant quality against real NF4 and absmax INT4 baselines.
+
+    All three methods are run on the same tensors with the same group_size.
+    No hardcoded baseline numbers — everything is measured.
+    """
+    from little_fig.engine.figquant import figquant_quantize, measure_quality
+
+    group_size = 128
+    shapes = [(768, 768), (2048, 768), (2048, 2048), (2048, 5632)]
+    seeds = [0, 42, 123]
+
+    totals = {
+        "figquant": {"cos": 0.0, "mse": 0.0, "snr": 0.0},
+        "nf4":      {"cos": 0.0, "mse": 0.0, "snr": 0.0},
+        "absmax":   {"cos": 0.0, "mse": 0.0, "snr": 0.0},
+    }
+    n_runs = 0
+
+    print(f"    {'Shape':>12}  {'Seed':>4}  {'Method':>10}  {'Cosine':>9}  {'MSE':>10}  {'SNR (dB)':>8}")
+    print(f"    {'-'*12}  {'-'*4}  {'-'*10}  {'-'*9}  {'-'*10}  {'-'*8}")
+
+    for shape in shapes:
+        for seed in seeds:
+            torch.manual_seed(seed)
+            W = torch.randn(shape)
+
+            # FigQuant (adaptive codebook + sensitivity weighting)
+            q_fq = figquant_quantize(W, group_size=group_size, n_iters=8, sensitivity_weight=True)
+            qual_fq = measure_quality(W, q_fq)
+
+            # Real NF4 (fixed codebook, no refinement)
+            W_nf4 = _nf4_quantize_dequantize(W, group_size=group_size)
+            qual_nf4 = _measure_quality_raw(W, W_nf4)
+
+            # Real absmax INT4 (uniform 16 levels)
+            W_abs = _absmax_int4_quantize_dequantize(W, group_size=group_size)
+            qual_abs = _measure_quality_raw(W, W_abs)
+
+            for tag, q in [("FigQuant", qual_fq), ("NF4", qual_nf4), ("AbsmaxI4", qual_abs)]:
+                print(f"    {str(shape):>12}  {seed:>4}  {tag:>10}  {q['cosine_similarity']:.6f}  {q['mse']:.6e}  {q['snr_db']:.1f}")
+
+            key_map = {"figquant": qual_fq, "nf4": qual_nf4, "absmax": qual_abs}
+            for k, q in key_map.items():
+                totals[k]["cos"] += q["cosine_similarity"]
+                totals[k]["mse"] += q["mse"]
+                totals[k]["snr"] += q["snr_db"]
+            n_runs += 1
+            print()
+
+    # Averages
+    avgs = {}
+    for method in totals:
+        avgs[method] = {k: v / n_runs for k, v in totals[method].items()}
+
+    print(f"    {'AVERAGES':>12}  {'':>4}  {'Method':>10}  {'Cosine':>9}  {'MSE':>10}  {'SNR (dB)':>8}")
+    print(f"    {'-'*12}  {'-'*4}  {'-'*10}  {'-'*9}  {'-'*10}  {'-'*8}")
+    for method in ["figquant", "nf4", "absmax"]:
+        a = avgs[method]
+        label = {"figquant": "FigQuant", "nf4": "NF4", "absmax": "AbsmaxI4"}[method]
+        print(f"    {'':>12}  {'':>4}  {label:>10}  {a['cos']:.6f}  {a['mse']:.6e}  {a['snr']:.1f}")
+
+    # Improvement over NF4
+    mse_vs_nf4 = (avgs["nf4"]["mse"] - avgs["figquant"]["mse"]) / avgs["nf4"]["mse"] * 100
+    mse_vs_abs = (avgs["absmax"]["mse"] - avgs["figquant"]["mse"]) / avgs["absmax"]["mse"] * 100
+    snr_vs_nf4 = avgs["figquant"]["snr"] - avgs["nf4"]["snr"]
+    snr_vs_abs = avgs["figquant"]["snr"] - avgs["absmax"]["snr"]
+
+    print(f"\n    Higher cosine & SNR = better.  Lower MSE = better.")
+    print(f"    FigQuant vs NF4:       {mse_vs_nf4:.1f}% less MSE  (+{snr_vs_nf4:.2f} dB SNR)")
+    print(f"    FigQuant vs AbsmaxI4:  {mse_vs_abs:.1f}% less MSE  (+{snr_vs_abs:.2f} dB SNR)")
+
+    # Assert FigQuant beats NF4 on average
+    assert avgs["figquant"]["mse"] < avgs["nf4"]["mse"], \
+        f"FigQuant MSE ({avgs['figquant']['mse']:.6f}) should be lower than NF4 ({avgs['nf4']['mse']:.6f})"
+    assert avgs["figquant"]["cos"] > avgs["nf4"]["cos"], \
+        f"FigQuant cosine ({avgs['figquant']['cos']:.6f}) should exceed NF4 ({avgs['nf4']['cos']:.6f})"
+
+    RESULTS['figquant_vs_baselines'] = {
+        'averages': avgs,
+        'mse_reduction_vs_nf4_pct': mse_vs_nf4,
+        'mse_reduction_vs_absmax_pct': mse_vs_abs,
+        'snr_gain_vs_nf4_db': snr_vs_nf4,
+        'snr_gain_vs_absmax_db': snr_vs_abs,
+        'n_shapes': len(shapes),
+        'n_seeds': len(seeds),
+        'n_runs': n_runs,
     }
 
 
@@ -391,7 +535,7 @@ if __name__ == "__main__":
     # Tests
     run_test("FigQuant roundtrip", test_figquant_roundtrip)
     run_test("FigQuant double quantization", test_figquant_double_quant)
-    run_test("FigQuant vs FIG4 quality", test_figquant_vs_fig4)
+    run_test("FigQuant vs real baselines (NF4 + AbsmaxI4)", test_figquant_vs_baselines)
     run_test("FigKernel RMSNorm", test_figkernel_rmsnorm)
     run_test("FigKernel SwiGLU", test_figkernel_swiglu)
     run_test("FigKernel chunked CE", test_figkernel_chunked_ce)

@@ -324,8 +324,44 @@ async function loadCkpts(){try{const r=await fetch('/api/checkpoints');const d=a
 function connectTerm(){if(termWs&&termWs.readyState===WebSocket.OPEN)return;const p=location.protocol==='https:'?'wss':'ws';termWs=new WebSocket(`${p}://${location.host}/api/terminal`);termWs.onmessage=e=>{const d=JSON.parse(e.data);if(d.type==='log'){const el=document.createElement('div');el.textContent=d.content;$('#term').appendChild(el);$('#term').scrollTop=$('#term').scrollHeight}};termWs.onclose=()=>termWs=null}
 function runCmd(){const inp=$('#term-in'),cmd=inp.value.trim();if(!cmd)return;if(termWs&&termWs.readyState===WebSocket.OPEN)termWs.send(JSON.stringify({command:cmd}));inp.value=''}
 
+// ── Training ─────────────────────────────────────────────────────────────────
+$('#train-btn').onclick=async()=>{
+  const btn=$('#train-btn');btn.disabled=true;btn.textContent='⏳ Training...';
+  $('#train-status').className='badge badge-amber';$('#train-status').textContent='Training';
+  const body={model_id:$('#tr-model').value,tier:$('#tr-tier').value,dataset:$('#tr-dataset').value,
+    local_file:$('#tr-local').value,epochs:$('#tr-epochs').value,batch_size:$('#tr-batch').value,
+    learning_rate:$('#tr-lr').value,max_seq_length:$('#tr-seq').value,lora_r:$('#tr-rank').value,
+    lora_alpha:$('#tr-alpha').value,ember_mode:$('#tr-ember').checked};
+  try{const r=await fetch('/api/train/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||'Failed');
+    $('#train-log').innerHTML='<div class="text-fig-400">✓ Training started for '+body.model_id+'</div>';
+    const poll=setInterval(async()=>{try{const s=await(await fetch('/api/train/status')).json();
+      const logs=await(await fetch('/api/logs?n=20')).json();
+      $('#train-log').innerHTML=logs.logs.map(l=>'<div>'+l+'</div>').join('');
+      $('#train-log').scrollTop=$('#train-log').scrollHeight;
+      if(!s.training){clearInterval(poll);btn.disabled=false;btn.textContent='▶ Start Training';
+        $('#train-status').className='badge badge-green';$('#train-status').textContent='Done'}}catch(e){}},2000);
+  }catch(e){btn.disabled=false;btn.textContent='▶ Start Training';
+    $('#train-status').className='badge badge-red';$('#train-status').textContent='Error';
+    $('#train-log').innerHTML='<div class="text-red-400">✗ '+e.message+'</div>'}};
+
 // ── Benchmarks ───────────────────────────────────────────────────────────────
-async function runBench(){$('#bench-btn').disabled=true;$('#bench-btn').textContent='Running…';try{const r=await fetch('/api/health');const d=await r.json();$('#bench-btn').textContent='✓ Updated'}catch(e){}setTimeout(()=>{$('#bench-btn').disabled=false;$('#bench-btn').textContent='▶ Run Live'},2000)}
+async function runBench(){$('#bench-btn').disabled=true;$('#bench-btn').textContent='⏳ Running…';
+  try{const r=await fetch('/api/bench/run',{method:'POST'});const d=await r.json();
+    if(d.figquant){const q=d.figquant;$('#bench-quant').innerHTML=
+      `<div class="flex justify-between text-zinc-500"><span>Cosine Similarity</span><span class="text-cyan-400">${q.cosine_similarity}</span></div>
+       <div class="flex justify-between text-zinc-500"><span>MSE</span><span class="text-cyan-400">${q.mse}</span></div>
+       <div class="flex justify-between text-zinc-500"><span>SNR</span><span class="text-cyan-400">${q.snr_db} dB</span></div>
+       <div class="flex justify-between text-zinc-500"><span>Bits/param</span><span class="text-cyan-400">${q.bits_per_param}</span></div>
+       <div class="flex justify-between text-zinc-500"><span>Compression</span><span class="text-cyan-400">${q.compression_ratio}×</span></div>
+       <div class="w-full bg-zinc-800 rounded-full h-1.5 mt-2 light:bg-zinc-200"><div class="bg-cyan-500 h-1.5 rounded-full" style="width:${q.cosine_similarity*100}%"></div></div>`}
+    if(d.figkernel){const k=d.figkernel;$('#bench-kernel').innerHTML=
+      `<div class="flex justify-between text-zinc-500"><span>RMSNorm (standard)</span><span class="text-zinc-600">${k.rmsnorm_standard_ms}ms</span></div>
+       <div class="flex justify-between text-zinc-500"><span>RMSNorm (FigKernel)</span><span class="text-cyan-400">${k.rmsnorm_fig_ms}ms</span></div>
+       <div class="flex justify-between text-zinc-500"><span>Speedup</span><span class="text-cyan-400">${k.rmsnorm_speedup}× faster</span></div>`}
+    $('#bench-btn').textContent='✓ Done'}
+  catch(e){$('#bench-btn').textContent='✗ Error'}
+  setTimeout(()=>{$('#bench-btn').disabled=false;$('#bench-btn').textContent='▶ Run Live'},3000)}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 fetch('/api/model/status').then(r=>r.json()).then(d=>{if(d.loaded)connectWS()}).catch(()=>{});

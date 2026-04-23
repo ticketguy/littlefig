@@ -1,8 +1,8 @@
-# Fig Engine: CPU-Native LLM Training via Streaming INT4 Quantization and Adaptive Training Tiers
+# Fig Engine: CPU-Native LLM Training via Adaptive Codebook Quantization, Fused Operations, and Embedded Cognitive Memory
 
 **Authors:** ticketguy  
 **Repository:** https://github.com/ticketguy/littlefig  
-**Version:** 0.5.0
+**Version:** 0.6.0
 
 ---
 

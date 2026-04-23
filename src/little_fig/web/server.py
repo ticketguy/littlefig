@@ -69,7 +69,7 @@ def _get_hw():
 async def lifespan(app: FastAPI):
     _get_hw(); _log("Server started"); yield
 
-app = FastAPI(title="Little Fig", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Little Fig", version="0.6.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -97,7 +97,7 @@ async def health():
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage(os.getcwd())
     return {
-        "status": "ok", "version": "0.5.0",
+        "status": "ok", "version": "0.6.0",
         "platform": {"os": platform.system(), "os_version": platform.version()[:60],
                       "python": sys.version.split()[0], "arch": platform.machine()},
         "hardware": {
@@ -277,6 +277,163 @@ async def list_checkpoints():
                 "created": datetime.fromtimestamp(d.stat().st_mtime).isoformat(),
             })
     return {"checkpoints": checkpoints}
+
+
+# ── Training ──────────────────────────────────────────────────────────────────
+
+_training = False
+_train_thread = None
+
+@app.post("/api/train/start")
+async def start_training(body: dict):
+    """Start a training run in a background thread."""
+    global _training, _train_thread
+    if _training:
+        raise HTTPException(409, "Training already in progress")
+
+    model_id = body.get("model_id", "").strip()
+    if not model_id:
+        raise HTTPException(400, "model_id required")
+
+    _training = True
+    _log(f"🏋️ Starting training: {model_id}")
+
+    def _run():
+        global _training
+        try:
+            from little_fig.engine.model import FigModel
+            from little_fig.engine.trainer import FigTrainer, FigTrainingConfig
+
+            tier = body.get("tier", "auto")
+            ember = body.get("ember_mode", False)
+            dataset = body.get("dataset", "").strip()
+            local_file = body.get("local_file", "").strip()
+
+            config = FigTrainingConfig(
+                tier=None if tier == "auto" else tier,
+                num_epochs=int(body.get("epochs", 3)),
+                batch_size=int(body.get("batch_size", 1)),
+                learning_rate=float(body.get("learning_rate", "2e-4")),
+                max_seq_length=int(body.get("max_seq_length", 512)),
+                lora_r=int(body.get("lora_r", 16)),
+                lora_alpha=int(body.get("lora_alpha", 32)),
+            )
+
+            _log(f"   Loading model with FigQuant...")
+            fig_model = FigModel.from_pretrained(
+                model_id,
+                lora_r=config.lora_r,
+                lora_alpha=config.lora_alpha,
+                ember_mode=ember,
+            )
+
+            trainer = FigTrainer(fig_model, config)
+
+            if ember:
+                n = int(body.get("ember_examples", 500))
+                _log(f"   Loading Ember dataset ({n} examples)...")
+                trainer.load_ember_dataset(n_examples=n)
+            elif local_file:
+                _log(f"   Loading local dataset: {local_file}")
+                trainer.load_dataset(local_file)
+            elif dataset:
+                _log(f"   Loading HF dataset: {dataset}")
+                trainer.load_dataset(dataset)
+            else:
+                _log("✗ No dataset specified")
+                _training = False
+                return
+
+            _log("   Training started...")
+            trainer.train()
+            _log("✓ Training complete!")
+
+        except Exception as e:
+            _log(f"✗ Training error: {e}")
+        finally:
+            _training = False
+
+    _train_thread = threading.Thread(target=_run, daemon=True)
+    _train_thread.start()
+    return {"status": "started", "model_id": model_id}
+
+
+@app.get("/api/train/status")
+async def train_status():
+    return {"training": _training}
+
+
+@app.post("/api/train/stop")
+async def stop_training():
+    global _training
+    _training = False
+    _log("⚠ Training stop requested")
+    return {"status": "stop_requested"}
+
+
+# ── Benchmarks ────────────────────────────────────────────────────────────────
+
+@app.post("/api/bench/run")
+async def run_benchmarks():
+    """Run FigQuant + FigKernel benchmarks and return results."""
+    _log("📊 Running benchmarks...")
+    results = {}
+
+    try:
+        import torch
+        from little_fig.engine.figquant import figquant_quantize, figquant_dequantize, measure_quality
+        from little_fig.engine.figkernel import FigRMSNorm
+
+        # FigQuant quality
+        W = torch.randn(2048, 768)
+        fq = figquant_quantize(W, group_size=128, n_iters=8)
+        qual = measure_quality(W, fq)
+        results["figquant"] = {
+            "cosine_similarity": round(qual["cosine_similarity"], 6),
+            "mse": round(qual["mse"], 6),
+            "snr_db": round(qual["snr_db"], 1),
+            "bits_per_param": round(qual["bits_per_param"], 2),
+            "compression_ratio": round(qual["compression_ratio"], 1),
+        }
+
+        # FigKernel RMSNorm speed
+        x = torch.randn(4, 256, 2048)
+        norm = FigRMSNorm(2048)
+        weight = torch.ones(2048)
+
+        import time as _t
+        # Standard
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(10):
+                _ = x.pow(2).mean(-1, keepdim=True)
+                _ = x * torch.rsqrt(_ + 1e-6) * weight
+            times.append((_t.time() - t0) / 10 * 1000)
+        std_ms = sum(times) / len(times)
+
+        # FigRMSNorm
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(10):
+                _ = norm(x)
+            times.append((_t.time() - t0) / 10 * 1000)
+        fig_ms = sum(times) / len(times)
+
+        results["figkernel"] = {
+            "rmsnorm_standard_ms": round(std_ms, 2),
+            "rmsnorm_fig_ms": round(fig_ms, 2),
+            "rmsnorm_speedup": round(std_ms / max(fig_ms, 0.01), 2),
+        }
+
+        _log(f"✓ Benchmarks complete: cosine={qual['cosine_similarity']:.4f}, RMSNorm {std_ms/max(fig_ms,0.01):.1f}×")
+
+    except Exception as e:
+        _log(f"✗ Benchmark error: {e}")
+        raise HTTPException(500, str(e))
+
+    return results
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────

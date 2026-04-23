@@ -1,18 +1,15 @@
 """
-Little Fig — Unified Model Engine (v0.4.1)
+Little Fig — Unified Model Engine (v0.6)
 
 Loads models from ANY source:
-    1. Local GGUF files    → via llama-cpp-python (if installed) or llama-server
+    1. Local GGUF files    → via universal GGUF loader (auto-detects any arch)
     2. Local HF folders    → downloaded model directories
     3. HuggingFace Hub     → auto-downloads from hub
-    4. Fig Engine INT4     → 7.1× less RAM, pure PyTorch, always works
-
-Loading priority for local .gguf files:
-    Try llama-cpp-python → if fails, tell user how to fix → offer Fig Engine alternative
+    4. Fig Engine FigQuant → 7.4× less RAM, adaptive codebook INT4, pure PyTorch
 
 Loading modes for HF models:
     FP32  → standard HuggingFace (small models / enough RAM)
-    INT4  → Fig Engine streaming (large models / limited RAM)
+    INT4  → Fig Engine FigQuant streaming (large models / limited RAM)
 """
 
 import os

@@ -632,7 +632,7 @@ def load_gguf_as_fig_model(
       3. Raise with actionable error message
 
     For inference (lora_r=0): loads model in FP32.
-    For training (lora_r>0): quantizes to FIG4 + adds LoRA adapters.
+    For training (lora_r>0): quantizes with FigQuant + adds LoRA adapters.
     """
     from .model import FigModel
 
@@ -697,20 +697,19 @@ def load_gguf_as_fig_model(
     fig.lora_r = lora_r
     fig.lora_alpha = lora_alpha
 
-    # Optionally quantize to FIG4 + add LoRA (for training)
+    # Optionally quantize with FigQuant + add LoRA (for training)
     if lora_r > 0:
-        _apply_fig4_quantization(fig, lora_r, lora_alpha)
+        _apply_figquant_quantization(fig, lora_r, lora_alpha)
 
     return fig
 
 
-def _apply_fig4_quantization(fig, lora_r: int, lora_alpha: int):
-    """Quantize linear layers to FIG4 INT4 and add LoRA adapters."""
+def _apply_figquant_quantization(fig, lora_r: int, lora_alpha: int):
+    """Quantize linear layers with FigQuant adaptive codebook INT4 and add LoRA adapters."""
     import torch.nn as nn
-    from .quantize import FigQuantizer
+    from .figquant import figquant_quantize
     from .linear import FigLinear
 
-    quantizer = FigQuantizer(group_size=128)
     model = fig.model
 
     # Auto-detect target modules from the model
@@ -735,13 +734,13 @@ def _apply_fig4_quantization(fig, lora_r: int, lora_alpha: int):
         weight = module.weight.data
         original_bytes += weight.numel() * 4
 
-        fig4 = quantizer.quantize(weight)
-        quantized_bytes += fig4.nbytes_quantized
+        fq = figquant_quantize(weight, group_size=128)
+        quantized_bytes += fq.nbytes
 
         bias = module.bias.data if module.bias is not None else None
         fig_layer = FigLinear(
             module.in_features, module.out_features,
-            fig4, lora_r=lora_r, lora_alpha=lora_alpha, bias=bias,
+            fq, lora_r=lora_r, lora_alpha=lora_alpha, bias=bias,
         )
         replacements[name] = fig_layer
 
@@ -759,7 +758,7 @@ def _apply_fig4_quantization(fig, lora_r: int, lora_alpha: int):
 
     if original_bytes > 0:
         ratio = original_bytes / max(quantized_bytes, 1)
-        print(f"   ✓ Quantized {len(replacements)} layers to FIG4 ({ratio:.1f}× compression)")
+        print(f"   ✓ Quantized {len(replacements)} layers via FigQuant ({ratio:.1f}× compression)")
 
 
 # ── Metadata reading (kept for other modules that may use it) ─────────────────

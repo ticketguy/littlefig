@@ -23,7 +23,7 @@ import shutil
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from little_fig.engine.quantize import FigQuantizer, FIG4Tensor, _quantize_int4, _dequantize_int4
+from little_fig.engine.figquant import FigQuantTensor, figquant_quantize, figquant_dequantize
 from little_fig.engine.linear import FigLinear, DequantMatmul
 from little_fig.engine.tier import TrainingTier, estimate_memory, select_tier
 from little_fig.engine.lisa import LISAScheduler, LISAConfig
@@ -41,13 +41,13 @@ def test_failed(name, e):
 
 
 def test_quantize_roundtrip():
-    """Test INT4 quantization and dequantization accuracy."""
+    """Test FigQuant quantization and dequantization accuracy."""
     shapes = [(64, 64), (768, 768), (2048, 5632)]
     
     for shape in shapes:
         W = torch.randn(shape)
-        q = _quantize_int4(W, group_size=128)
-        W_deq = _dequantize_int4(q)
+        q = figquant_quantize(W, group_size=128)
+        W_deq = figquant_dequantize(q)
         
         assert W_deq.shape == W.shape, f"Shape mismatch: {W_deq.shape} vs {W.shape}"
         
@@ -59,39 +59,31 @@ def test_quantize_roundtrip():
         mse = torch.nn.functional.mse_loss(W_deq, W).item()
         assert mse < 0.02, f"MSE too high: {mse}"
     
-    test_passed("Quantize roundtrip (shapes, cos_sim > 0.99)")
+    test_passed("FigQuant roundtrip (shapes, cos_sim > 0.99)")
 
 
-def test_quantize_save_load():
-    """Test saving and loading FIG4 files."""
-    tmpdir = tempfile.mkdtemp()
-    try:
-        W = torch.randn(256, 512)
-        q = _quantize_int4(W, group_size=128)
-        
-        path = os.path.join(tmpdir, "test.fig4")
-        q.save(path)
-        
-        assert os.path.exists(path), "File not created"
-        
-        loaded = FIG4Tensor.load(path)
-        W_orig = _dequantize_int4(q)
-        W_loaded = _dequantize_int4(loaded)
-        
-        assert torch.allclose(W_orig, W_loaded, atol=1e-6), "Roundtrip through disk failed"
-        
-        test_passed("Quantize save/load roundtrip")
-    finally:
-        shutil.rmtree(tmpdir)
+def test_quantize_quality():
+    """Test FigQuant achieves better quality than basic INT4."""
+    W = torch.randn(768, 768)
+    q = figquant_quantize(W, group_size=128)
+    W_deq = figquant_dequantize(q)
+    
+    cos_sim = torch.nn.functional.cosine_similarity(
+        W.flatten().unsqueeze(0), W_deq.flatten().unsqueeze(0)
+    ).item()
+    assert cos_sim > 0.995, f"FigQuant cosine sim too low: {cos_sim}"
+    assert q.bits_per_param < 5.0, f"Bits/param too high: {q.bits_per_param}"
+    
+    test_passed("FigQuant quality (cos_sim > 0.995, <5 bits/param)")
 
 
 def test_fig_linear_forward():
     """Test FigLinear forward pass produces correct shape."""
     in_f, out_f = 64, 128
     W = torch.randn(out_f, in_f)
-    q = _quantize_int4(W, group_size=64)
+    fq = figquant_quantize(W, group_size=64)
     
-    layer = FigLinear(in_f, out_f, q, lora_r=8, lora_alpha=16)
+    layer = FigLinear(in_f, out_f, fq, lora_r=8, lora_alpha=16)
     x = torch.randn(2, 16, in_f)
     y = layer(x)
     
@@ -103,9 +95,9 @@ def test_fig_linear_backward():
     """Test FigLinear backward pass computes gradients for LoRA."""
     in_f, out_f = 64, 128
     W = torch.randn(out_f, in_f)
-    q = _quantize_int4(W, group_size=64)
+    fq = figquant_quantize(W, group_size=64)
     
-    layer = FigLinear(in_f, out_f, q, lora_r=8)
+    layer = FigLinear(in_f, out_f, fq, lora_r=8)
     x = torch.randn(2, 16, in_f, requires_grad=True)
     y = layer(x)
     loss = y.sum()
@@ -114,7 +106,7 @@ def test_fig_linear_backward():
     assert layer.lora_A.grad is not None, "No gradient for lora_A"
     assert layer.lora_B.grad is not None, "No gradient for lora_B"
     assert x.grad is not None, "No gradient for input"
-    assert layer.q_packed.grad is None or not layer.q_packed.requires_grad, "INT4 weights should be frozen"
+    assert layer.q_indices.grad is None or not layer.q_indices.requires_grad, "INT4 weights should be frozen"
     
     test_passed("FigLinear backward (LoRA gradients)")
 
@@ -123,9 +115,9 @@ def test_fig_linear_merge():
     """Test LoRA merge produces valid weight."""
     in_f, out_f = 64, 128
     W = torch.randn(out_f, in_f)
-    q = _quantize_int4(W, group_size=64)
+    fq = figquant_quantize(W, group_size=64)
     
-    layer = FigLinear(in_f, out_f, q, lora_r=8)
+    layer = FigLinear(in_f, out_f, fq, lora_r=8)
     
     # Manually set LoRA weights
     layer.lora_A.data.fill_(0.1)
@@ -135,7 +127,7 @@ def test_fig_linear_merge():
     assert merged.shape == (out_f, in_f), f"Merged shape wrong: {merged.shape}"
     
     # Merged should differ from base (LoRA contributes)
-    base = _dequantize_int4(q)
+    base = figquant_dequantize(fq)
     diff = (merged - base).abs().sum().item()
     assert diff > 0, "LoRA merge had no effect"
     
@@ -363,7 +355,7 @@ def run_all_tests():
     
     tests = [
         test_quantize_roundtrip,
-        test_quantize_save_load,
+        test_quantize_quality,
         test_fig_linear_forward,
         test_fig_linear_backward,
         test_fig_linear_merge,

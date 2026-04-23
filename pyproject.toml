@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "little-fig"
-version = "0.5.0"
-description = "Little Fig: CPU-native LLM engine with FigQuant, FigKernel, and custom web UI"
+version = "0.6.0"
+description = "Little Fig: CPU-native LLM engine with FigQuant, FigKernel, FigPipeline, and Ember memory integration"
 readme = "READme.md"
 requires-python = ">=3.9"
 
@@ -39,16 +39,8 @@ full = [
     "embers-diaries",
 ]
 
-# Legacy fine-tuning (v0.3 trainer, uses PEFT + HF Trainer)
-legacy = [
-    "peft>=0.9.0,<1.0.0",
-    "datasets>=2.18.0,<4.0.0",
-    "accelerate>=0.27.0,<2.0.0",
-]
-
 [project.scripts]
-little-fig       = "little_fig:start"
-little-fig-train = "little_fig.trainer:cli_train"
+little-fig = "little_fig:start"
 
 [tool.setuptools.packages.find]
 where = ["src"]

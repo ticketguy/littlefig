@@ -1,10 +1,12 @@
 """
-Fig Engine — Streaming Model Loader
+Fig Engine — Streaming Model Loader (v3: FigQuant + FigKernel)
 
-Loads a HuggingFace model with INT4 quantized weights and LoRA adapters.
+Loads a HuggingFace model with FigQuant adaptive codebook INT4 quantization
+and optional FigKernel fused ops. Supports Ember memory token injection.
+
 Two modes:
-    1. From HuggingFace Hub: downloads, quantizes, saves to cache, loads
-    2. From pre-quantized FIG4 directory: loads directly (fast)
+    1. From HuggingFace Hub: downloads, quantizes with FigQuant, loads
+    2. From pre-quantized directory: loads directly (fast)
 
 The model streams layers from INT4 files on disk. Only LoRA adapters and
 active layers (for LISA) live in RAM as FP32.
@@ -17,7 +19,7 @@ import json
 import gc
 from typing import Optional, Dict, List, Tuple
 
-from .quantize import FigQuantizer, FIG4Tensor
+from .figquant import figquant_quantize, FigQuantTensor
 from .linear import FigLinear, FigLinearFull
 from .tier import TrainingTier
 
@@ -48,6 +50,37 @@ def _get_cache_dir(model_name: str) -> str:
     cache_base = os.path.join(os.path.expanduser("~"), ".cache", "fig_engine")
     safe_name = model_name.replace("/", "__")
     return os.path.join(cache_base, safe_name)
+
+
+def _swap_rmsnorm(model: nn.Module):
+    """Replace all RMSNorm / LayerNorm modules with FigRMSNorm for fused ops."""
+    try:
+        from .figkernel import FigRMSNorm
+    except ImportError:
+        return  # FigKernel not available, skip
+
+    count = 0
+    for name, module in list(model.named_modules()):
+        # Match common RMSNorm class names across architectures
+        cls_name = module.__class__.__name__
+        is_rmsnorm = "RMSNorm" in cls_name or "rmsnorm" in cls_name.lower()
+
+        if is_rmsnorm and hasattr(module, "weight"):
+            hidden_size = module.weight.shape[0]
+            eps = getattr(module, "eps", getattr(module, "variance_epsilon", 1e-6))
+            fig_norm = FigRMSNorm(hidden_size, eps=eps)
+            fig_norm.weight.data.copy_(module.weight.data)
+
+            # Replace in parent
+            parts = name.split(".")
+            parent = model
+            for part in parts[:-1]:
+                parent = getattr(parent, part)
+            setattr(parent, parts[-1], fig_norm)
+            count += 1
+
+    if count > 0:
+        print(f"   ✓ FigKernel: swapped {count} RMSNorm → FigRMSNorm (fused)")
 
 
 class FigModel(nn.Module):
@@ -96,9 +129,11 @@ class FigModel(nn.Module):
         compile_model: bool = False,
         fast: bool = True,
         use_liger: bool = False,
+        ember_mode: bool = False,
+        fuse_kernels: bool = True,
     ) -> "FigModel":
         """
-        Load a model with INT4 quantized base weights + LoRA adapters.
+        Load a model with FigQuant INT4 quantized base weights + LoRA adapters.
         
         Args:
             model_name: HuggingFace model name or path
@@ -108,10 +143,12 @@ class FigModel(nn.Module):
             tier: Training tier (affects which layers are trainable)
             target_modules: Which linear layers to quantize + add LoRA
             cache_dir: Directory for cached quantized weights
-            group_size: INT4 quantization group size
+            group_size: FigQuant quantization group size
             compile_model: Whether to apply torch.compile
             fast: Use cached dequant (True=fast, False=low-RAM)
             use_liger: Apply Liger Kernel optimizations (GPU, +20% speed, -60% VRAM)
+            ember_mode: Inject Ember memory tokens into tokenizer + resize embeddings
+            fuse_kernels: Replace RMSNorm with FigRMSNorm for fused ops
         
         Returns:
             FigModel ready for training
@@ -132,10 +169,13 @@ class FigModel(nn.Module):
         mode_label = "fast" if fast else "low-RAM"
         print(f"🍐 Fig Engine: Loading {model_name}")
         print(f"   Architecture: {arch}")
+        print(f"   Quantization: FigQuant (adaptive codebook INT4)")
         print(f"   Target modules: {target_modules}")
         print(f"   Training tier: {tier.value}")
         print(f"   LoRA rank: {lora_r}, alpha: {lora_alpha}")
         print(f"   Speed mode: {mode_label}")
+        if ember_mode:
+            print(f"   🔥 Ember mode: memory tokens will be injected")
         
         # Apply Liger Kernel if requested (must happen BEFORE model load)
         if use_liger:
@@ -152,6 +192,16 @@ class FigModel(nn.Module):
             fig.tokenizer.pad_token = fig.tokenizer.eos_token
             fig.tokenizer.pad_token_id = fig.tokenizer.eos_token_id
         
+        # Ember mode: inject memory tokens into tokenizer
+        if ember_mode:
+            from .ember_integration import MEMORY_TOKENS
+            new_tokens = list(MEMORY_TOKENS.values())
+            n_added = fig.tokenizer.add_special_tokens(
+                {"additional_special_tokens": new_tokens}
+            )
+            if n_added > 0:
+                print(f"   🔥 Added {n_added} Ember memory tokens to tokenizer")
+        
         # Load model
         print(f"   Loading original model...")
         load_kwargs = {
@@ -167,13 +217,21 @@ class FigModel(nn.Module):
             orig_model = AutoModelForCausalLM.from_pretrained(model_name, **load_kwargs)
         fig._config = orig_model.config
         
-        # Quantize target linear layers and replace with FigLinear
-        quantizer = FigQuantizer(group_size=group_size)
+        # Ember mode: resize embeddings to fit new tokens
+        if ember_mode:
+            orig_model.resize_token_embeddings(len(fig.tokenizer))
+            print(f"   🔥 Resized embeddings to {len(fig.tokenizer)} tokens")
+        
+        # FigKernel: swap RMSNorm → FigRMSNorm for fused ops
+        if fuse_kernels:
+            _swap_rmsnorm(orig_model)
+        
+        # Quantize target linear layers with FigQuant and replace with FigLinear
         quantized_count = 0
         original_bytes = 0
         quantized_bytes = 0
         
-        print(f"   Quantizing linear layers to INT4...")
+        print(f"   Quantizing linear layers with FigQuant...")
         
         replacements = {}
         for name, module in orig_model.named_modules():
@@ -202,16 +260,16 @@ class FigModel(nn.Module):
             
             original_bytes += weight.numel() * 4
             
-            # Quantize
-            fig4 = quantizer.quantize(weight)
-            quantized_bytes += fig4.nbytes_quantized
+            # Quantize with FigQuant (adaptive codebook)
+            fq = figquant_quantize(weight, group_size=group_size)
+            quantized_bytes += fq.nbytes
             
             # Create FigLinear replacement
             bias = module.bias.data if module.bias is not None else None
             fig_layer = FigLinear(
                 in_features=in_features,
                 out_features=out_features,
-                fig4=fig4,
+                fq=fq,
                 lora_r=lora_r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
@@ -252,7 +310,7 @@ class FigModel(nn.Module):
         total = sum(p.numel() for p in fig.parameters())
         ratio = original_bytes / max(quantized_bytes, 1)
         
-        print(f"   ✓ Quantized {quantized_count} layers ({ratio:.1f}× compression)")
+        print(f"   ✓ Quantized {quantized_count} layers via FigQuant ({ratio:.1f}× compression)")
         print(f"   ✓ Trainable: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
         print(f"   ✓ Base weights: {original_bytes/1e6:.1f} MB → {quantized_bytes/1e6:.1f} MB")
         

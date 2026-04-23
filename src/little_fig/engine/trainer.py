@@ -1,5 +1,5 @@
 """
-Fig Engine — Unified Trainer
+Fig Engine — Unified Trainer (v3: FigPipeline + Ember)
 
 Trains a FigModel using the selected tier:
     Tier 1: Streaming LoRA — standard backprop, LoRA params only
@@ -11,7 +11,9 @@ Supports:
     - HuggingFace datasets (Hub or local JSONL)
     - ChatML / messages format
     - Instruction format (instruction/input/output)
+    - Ember memory operation training data
     - Sequence packing
+    - FigPipeline (GPU compute + CPU optimizer states)
     - torch.compile acceleration
     - Automatic tier selection
 """
@@ -75,6 +77,9 @@ class FigTrainingConfig:
     
     # torch.compile
     compile_model: bool = False
+    
+    # FigPipeline (GPU compute + CPU optimizer states)
+    use_pipeline: bool = True  # Auto-use FigPipeline when GPU available
     
     # Output
     output_dir: str = "./checkpoints/fig_run"
@@ -174,6 +179,53 @@ class FigTrainer:
             drop_last=True,
         )
     
+    def load_ember_dataset(
+        self,
+        n_examples: int = 1000,
+        max_samples: Optional[int] = None,
+    ):
+        """
+        Generate and load Ember memory operation training data.
+        
+        Uses EmberTrainingDataGenerator to create synthetic examples
+        that teach the model to perform memory operations (store, recall,
+        consolidate, forget, conflict detection, episode segmentation,
+        reflection).
+        
+        Requires the model to be loaded with ember_mode=True.
+        """
+        from .ember_integration import EmberTrainingDataGenerator
+        
+        gen = EmberTrainingDataGenerator()
+        examples = gen.generate_dataset(n_examples=n_examples)
+        
+        if max_samples and len(examples) > max_samples:
+            examples = examples[:max_samples]
+        
+        print(f"🔥 Ember dataset: {len(examples)} memory training examples")
+        
+        tokenizer = self.model.tokenizer
+        max_len = self.config.max_seq_length
+        
+        tokenized = self._tokenize_instruction(examples, tokenizer, max_len)
+        
+        if self.config.use_packing:
+            self.dataset = PackedDataset(
+                tokenized, max_length=max_len,
+                pad_token_id=tokenizer.pad_token_id or 0,
+                eos_token_id=tokenizer.eos_token_id or 2,
+            )
+        else:
+            self.dataset = SimpleDataset(tokenized, max_len, tokenizer.pad_token_id or 0)
+        
+        self.dataloader = DataLoader(
+            self.dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            collate_fn=collate_packed,
+            drop_last=True,
+        )
+
     def _load_local(self, path: str) -> List[dict]:
         """Load from local JSONL or JSON file."""
         examples = []
@@ -345,11 +397,18 @@ class FigTrainer:
             return self._train_lora()
     
     def _train_lora(self):
-        """Tier 1: Standard LoRA training with backprop."""
+        """Tier 1: Standard LoRA training with backprop.
+        Uses FigPipeline for CPU-resident optimizer states when GPU is available.
+        """
         config = self.config
         model = self.model
-        
-        # Get trainable parameters
+
+        # Check if GPU available for FigPipeline
+        use_pipeline = torch.cuda.is_available() and config.use_pipeline
+        if use_pipeline:
+            return self._train_lora_pipeline()
+
+        # CPU path: standard AdamW
         trainable_params = model.get_trainable_parameters()
         optimizer = torch.optim.AdamW(
             trainable_params,
@@ -363,6 +422,54 @@ class FigTrainer:
         scheduler = self._get_scheduler(optimizer, warmup_steps, total_steps)
         
         self._training_loop(model, optimizer, scheduler, "Streaming LoRA")
+
+    def _train_lora_pipeline(self):
+        """Tier 1 with FigPipeline: GPU compute + CPU optimizer states."""
+        from .figpipeline import FigPipeline, PipelineConfig
+
+        config = self.config
+        model = self.model
+
+        pipe_config = PipelineConfig(
+            learning_rate=config.learning_rate,
+            weight_decay=config.weight_decay,
+            max_grad_norm=config.max_grad_norm,
+        )
+        pipeline = FigPipeline(model.model, pipe_config)
+
+        print(f"\n🍐 Training: Streaming LoRA + FigPipeline (GPU compute, CPU optimizer)")
+        print(f"   Epochs: {config.num_epochs}")
+        print(f"   Steps per epoch: {len(self.dataloader)}")
+
+        global_step = 0
+        for epoch in range(config.num_epochs):
+            epoch_loss = 0.0
+            epoch_steps = 0
+            t_epoch = time.time()
+
+            for batch_idx, batch in enumerate(self.dataloader):
+                loss = pipeline.train_step(
+                    input_ids=batch["input_ids"],
+                    labels=batch["labels"],
+                    attention_mask=batch.get("attention_mask"),
+                )
+                epoch_loss += loss
+                epoch_steps += 1
+                global_step += 1
+
+                if global_step % config.logging_steps == 0:
+                    avg = epoch_loss / epoch_steps
+                    elapsed = time.time() - t_epoch
+                    steps_per_sec = epoch_steps / elapsed
+                    gpu_mb = pipeline.gpu_memory_mb
+                    print(f"   step={global_step:5d}  loss={avg:.4f}  "
+                          f"speed={steps_per_sec:.2f} steps/s  GPU={gpu_mb:.0f}MB")
+
+            avg_loss = epoch_loss / max(epoch_steps, 1)
+            print(f"   Epoch {epoch+1}/{config.num_epochs}: avg_loss={avg_loss:.4f}")
+
+        pipeline.cleanup()
+        self._save_checkpoint(model, global_step, "final")
     
     def _train_lisa(self):
         """Tier 2: LISA training."""

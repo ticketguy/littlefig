@@ -58,7 +58,7 @@ def print_startup_banner(hw: dict):
     fig = """
   ╔══════════════════════════════════════════╗
   ║           🍐  L I T T L E  F I G        ║
-  ║     CPU-native LLM engine  v0.5.0       ║
+  ║     CPU-native LLM engine  v0.6.0       ║
   ║         Powered by Fig Engine           ║
   ╚══════════════════════════════════════════╝"""
     print(fig)
@@ -87,14 +87,9 @@ def start():
         from .web.server import run_server
         run_server()
     except ImportError as e:
-        # Fallback to Gradio if FastAPI not installed
-        try:
-            from .studio.app import run_studio
-            run_studio(hw=HW)
-        except ImportError:
-            print(f"❌ Could not load UI: {e}")
-            print("   Install with: pip install -e '.[full]'")
-            sys.exit(1)
+        print(f"❌ Could not load UI: {e}")
+        print("   Install with: pip install -e '.[full]'")
+        sys.exit(1)
     except Exception as e:
         print(f"❌ Startup error: {e}")
         raise

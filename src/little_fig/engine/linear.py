@@ -42,13 +42,14 @@ class DequantMatmul(torch.autograd.Function):
             indices=indices, codebook=codebook, scales=scales,
             shape=shape, n_groups=n_groups, group_size=group_size, numel=numel,
         )
-        W = figquant_dequantize(q)
+        W = figquant_dequantize(q).to(dtype=x.dtype)
         y = F.linear(x, W)
         ctx.save_for_backward(x, indices, codebook, scales)
         ctx.shape = shape
         ctx.n_groups = n_groups
         ctx.group_size = group_size
         ctx.numel = numel
+        ctx.input_dtype = x.dtype
         return y
 
     @staticmethod
@@ -59,7 +60,7 @@ class DequantMatmul(torch.autograd.Function):
             shape=ctx.shape, n_groups=ctx.n_groups,
             group_size=ctx.group_size, numel=ctx.numel,
         )
-        W = figquant_dequantize(q)
+        W = figquant_dequantize(q).to(dtype=ctx.input_dtype)
         grad_x = grad_output @ W
         return grad_x, None, None, None, None, None, None, None
 
@@ -174,13 +175,21 @@ class FigLinear(nn.Module):
         return result.reshape(-1)[:self.q_numel].reshape(self.q_shape)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # GPU mixed-precision safety: cast cached weights to input dtype.
+        # Under torch.autocast (standard GPU training path), F.linear handles
+        # this automatically. But if the caller passes pre-cast fp16/bf16 input
+        # without an active autocast context, F.linear crashes with dtype mismatch.
+        # This cast makes all code paths safe regardless of context.
+        input_dtype = x.dtype
+
         # FAST MODE with fused kernel (full FP32 cache available)
         if self._cached_W is not None and self.use_lora:
             try:
                 from .figkernel import fig_fused_linear_lora
+                W = self._cached_W.to(dtype=input_dtype) if self._cached_W.dtype != input_dtype else self._cached_W
                 return fig_fused_linear_lora(
-                    x, self._cached_W, self.lora_A, self.lora_B,
-                    self.lora_scale, self.bias,
+                    x, W, self.lora_A.to(dtype=input_dtype), self.lora_B.to(dtype=input_dtype),
+                    self.lora_scale, self.bias.to(dtype=input_dtype) if self.bias is not None else None,
                 )
             except Exception:
                 pass  # Fall through to non-fused path
@@ -188,10 +197,11 @@ class FigLinear(nn.Module):
         # Resolve base weight based on mode
         if self._cached_W is not None:
             # FAST MODE: use FP32 cache directly
-            h = F.linear(x, self._cached_W)
+            W = self._cached_W.to(dtype=input_dtype) if self._cached_W.dtype != input_dtype else self._cached_W
+            h = F.linear(x, W)
         elif self._figcache_indices is not None:
             # FIGCACHE MODE: dequant from cached uint8 indices (skips bit-unpacking)
-            W = self._figcache_dequant()
+            W = self._figcache_dequant().to(dtype=input_dtype)
             h = F.linear(x, W)
         else:
             # LOW-RAM MODE: full dequant from packed INT4 via custom autograd
@@ -202,11 +212,11 @@ class FigLinear(nn.Module):
 
         # LoRA correction
         if self.use_lora:
-            lora_out = (self.lora_dropout(x) @ self.lora_A) @ self.lora_B * self.lora_scale
+            lora_out = (self.lora_dropout(x) @ self.lora_A.to(dtype=input_dtype)) @ self.lora_B.to(dtype=input_dtype) * self.lora_scale
             h = h + lora_out
 
         if self.bias is not None:
-            h = h + self.bias
+            h = h + self.bias.to(dtype=input_dtype)
 
         return h
 
@@ -302,5 +312,6 @@ class FigLinearFull(nn.Module):
             self.bias = None
 
     def forward(self, x):
-        W = self._base_W + self.delta_weight
-        return F.linear(x, W, self.bias)
+        W = (self._base_W + self.delta_weight).to(dtype=x.dtype)
+        bias = self.bias.to(dtype=x.dtype) if self.bias is not None else None
+        return F.linear(x, W, bias)

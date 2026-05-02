@@ -41,6 +41,12 @@ from .figkernel import (
 # FigPipeline — Async GPU-CPU training
 from .figpipeline import FigPipeline, PipelineConfig
 
+# FigMeZO — Error-shaped zeroth-order optimizer (original research)
+from .figmezo import FigMeZO, FigMeZOConfig
+
+# MeZO — Standard zeroth-order optimizer
+from .mezo import MeZOOptimizer, MeZOConfig
+
 # Ember — Cognitive memory integration
 from .ember_integration import (
     MEMORY_TOKENS,
@@ -60,6 +66,9 @@ __all__ = [
     "FigRMSNorm", "FigCrossEntropy", "FigSwiGLU",
     "fig_fused_linear_lora", "fig_fused_linear",
     "fig_chunked_cross_entropy",
+    # FigMeZO / MeZO
+    "FigMeZO", "FigMeZOConfig",
+    "MeZOOptimizer", "MeZOConfig",
     # FigPipeline
     "FigPipeline", "PipelineConfig",
     # Ember

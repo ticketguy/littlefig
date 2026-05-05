@@ -169,9 +169,82 @@ FigCache produces **zero numerical error** vs fast mode — the output is bit-id
 
 ---
 
-## 4. Conclusion
+## 4. Original Research: Training Tier Improvements
 
-Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by 5.3% vs NF4 on real model weights (50/50 layers), by fitting the codebook to each layer's actual distribution via k-means; (2) FigCache exploits the codebook structure to cache at an intermediate level — cheaper than FP32 weights, faster than full dequant; (3) FigSweep reduces whole-model cache to a layer window by exploiting sequential execution; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
+The following results are original contributions validated experimentally on GPT-2 (124M) and TinyLlama (1.1B) with Alpaca training data. All findings were discovered through observation-first methodology: measure the system's behavior, identify structural inefficiencies, design targeted fixes, and validate in controlled experiments.
+
+### 4.1 FigMeZO: Inverse Error-Shaped Zeroth-Order Optimization
+
+**Observation:** Standard MeZO's gradient estimate has cosine similarity ±0.0008 to the true gradient — essentially random noise. FigQuant's quantization error is structurally concentrated: 10% of rows carry 15-37% of total MSE, correlated with weight magnitude (+0.64 Pearson).
+
+**Hypothesis (initial, wrong):** Perturb more on high-error dimensions where LoRA needs to compensate most. Result: +10% worse loss.
+
+**Finding (counter-intuitive):** Perturb MORE on LOW-error dimensions. These have clean, accurate base weights → smooth loss surface → perturbation gives reliable gradient signal. High-error dimensions are already noisy — perturbing further adds noise to noise.
+
+**Implementation:** `z = z_iso × (1 + α(σ - 1))` where α = −0.3 (negative = inverse shaping), σ = normalized q_scales from FigQuant. Zero extra memory — q_scales already stored.
+
+**Result (GPT-2, Alpaca, 100 steps, 3 seeds):**
+
+| Method | Avg Loss (last 20) | vs MeZO |
+|--------|:-:|:-:|
+| Standard MeZO | 6.08 ± 0.78 | baseline |
+| FigMeZO (α=−0.3) | **4.95 ± 0.58** | **−18.6%** |
+| FigMeZO (α=+0.7) | 6.69 ± 0.17 | +10% worse |
+
+**Key insight:** The quality of the base representation determines where you should probe, not the error magnitude. Clean dimensions give clean signal.
+
+### 4.2 Sensitivity-Guided LISA Layer Selection
+
+**Observation:** Loss sensitivity varies 200× across layers. Layer 0 `c_attn` shifts loss by 0.14 at perturbation scale 0.01. Layer 11 `c_proj` shifts by 0.001. Standard LISA selects layers uniformly at random, wasting unfreezing budget on insensitive layers.
+
+**Implementation:** At initialization, run one forward pass per layer with random perturbation (scale 0.01). Record |Δloss| for each layer. Use these as sampling weights instead of uniform random. Cost: N+1 forward passes at init — negligible vs training.
+
+**Result (GPT-2, Alpaca, 60 steps):**
+
+| Method | Avg Loss (last 20) | vs Random |
+|--------|:-:|:-:|
+| Random LISA | 2.41 | baseline |
+| Sensitivity-Weighted LISA | **2.17** | **−10%** |
+
+Block sensitivity measured: Block 0 = 0.053, Block 4 = 0.049, Block 6 = 0.052 (high); Block 10 = 0.013, Block 11 = 0.012 (low). High-sensitivity blocks correspond to early layers where representations are most mutable.
+
+### 4.3 Shared Codebook Fast Mode
+
+**Observation:** All 50 layer codebooks in GPT-2 are within 0.019 L2 distance of each other. Per-layer k-means produces nearly identical results for every layer, running 400 total iterations for minimal gain over reusing a single codebook.
+
+**Implementation:** `shared_codebook=True` on `FigModel.from_pretrained()`. First layer runs normal k-means. All subsequent layers reuse the first layer's codebook — only index assignment (no k-means).
+
+**Result (GPT-2, 50 layers):**
+
+| Mode | Avg MSE | Load Time | Quality Cost |
+|------|:-:|:-:|:-:|
+| Per-layer (default) | 1.768e-4 | 49.3s | baseline |
+| Shared codebook | 1.822e-4 | **9.7s (5.1× faster)** | +3.1% MSE |
+| Fixed NF4 (no k-means) | 1.866e-4 | ~9s | +5.6% MSE |
+
+In practice, the shared codebook produces only 0.1% loss difference on actual model output — well within noise. The shared codebook is strictly better than fixed NF4 while being equally fast.
+
+**Failed approach:** Global codebook (k-means on ALL weights concatenated) produces +375% MSE — the global weight distribution is too zero-peaked, starving tail codebook entries. Per-layer scaling is necessary; per-layer k-means is not.
+
+### 4.4 Validated Benchmark: FigQuant vs Industry (TinyLlama 1.1B)
+
+Live benchmark on all 156 linear layers of TinyLlama 1.1B, group_size=128:
+
+| Method | Cosine Sim | MSE | SNR (dB) | Wins |
+|--------|:-:|:-:|:-:|:-:|
+| **FigQuant** | **0.9956** | **5.64e-6** | **20.4** | **156/156** |
+| NF4 (QLoRA standard) | 0.9953 | 5.97e-6 | 20.1 | 0/156 |
+| Absmax INT4 | 0.9936 | 8.94e-6 | 18.7 | 0/156 |
+
+FigQuant wins every layer against both baselines. 5.4% lower MSE than NF4, 36.9% lower than Absmax INT4.
+
+Perplexity (GPT-2, wikitext-2): FP32=32.81, FigQuant=35.33 (+7.7% — typical for INT4).
+
+---
+
+## 5. Conclusion
+
+Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by 5.4% vs NF4 on real model weights (156/156 layers on TinyLlama); (2) FigMeZO exploits the quantization error structure to improve zeroth-order optimization by 18.6% — by probing clean dimensions rather than noisy ones; (3) Sensitivity-guided LISA concentrates training budget on the layers that actually affect the loss; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
 
 ---
 
@@ -183,3 +256,9 @@ Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practica
 4. Lv, K., et al. (2023). "Full Parameter Fine-tuning for Large Language Models with Limited Resources." arxiv 2306.09782.
 5. Dettmers, T., et al. (2023). "QLoRA: Efficient Finetuning of Quantized Language Models." NeurIPS 2023.
 6. Lin, J., et al. (2024). "AWQ: Activation-aware Weight Quantization." MLSys 2024.
+
+---
+
+*Code: https://github.com/ticketguy/littlefig*  
+*License: MIT*  
+*Built for Lila — a private family ASI assistant.*

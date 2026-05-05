@@ -32,7 +32,8 @@ All findings are original research — experimentally validated, not derived fro
 | **Training** | 4 Tiers | LoRA, LISA, MeZO, LOMO — auto-selected by available RAM |
 | **Optimizer** | FigMeZO | Error-shaped zeroth-order (−18.6% vs standard MeZO) |
 | **Pipeline** | FigPipeline | Async GPU-CPU training with CPU-resident optimizer states |
-| **Memory** | Ember | Cognitive memory tokens + training data for embedded memory |
+| **Memory** | Memory Fabric | Multi-adapter weight-space memory with gating, decay, and conflict detection |
+| **Cognition** | Ember Integration | 9 memory tokens trained into model vocabulary |
 
 ## Benchmark Results (TinyLlama 1.1B, live data)
 
@@ -148,6 +149,8 @@ src/little_fig/
 │   ├── figkernel.py         # Fused ops: RMSNorm, SwiGLU, CE, Linear+LoRA
 │   ├── figpipeline.py       # Async GPU-CPU training pipeline
 │   ├── figmezo.py           # FigMeZO: error-shaped zeroth-order optimizer
+│   ├── memory_fabric.py     # Memory Fabric: multi-adapter weight-space memory
+│   ├── micro_trainer.py     # Micro-training: write memories between turns
 │   ├── linear.py            # FigLinear: FigQuant base + LoRA (GPU dtype-safe)
 │   ├── model.py             # FigModel: streaming loader + shared codebook
 │   ├── trainer.py           # FigTrainer: unified training loop

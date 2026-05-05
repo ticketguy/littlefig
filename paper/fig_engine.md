@@ -242,9 +242,130 @@ Perplexity (GPT-2, wikitext-2): FP32=32.81, FigQuant=35.33 (+7.7% — typical fo
 
 ---
 
-## 5. Conclusion
+## 5. Dual-Architecture Memory System: Cognitive Core + Memory Fabric
 
-Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by 5.4% vs NF4 on real model weights (156/156 layers on TinyLlama); (2) FigMeZO exploits the quantization error structure to improve zeroth-order optimization by 18.6% — by probing clean dimensions rather than noisy ones; (3) Sensitivity-guided LISA concentrates training budget on the layers that actually affect the loss; and (4) Ember integration embeds cognitive memory directly into model weights rather than bolting it on externally.
+### 5.1 Design Philosophy
+
+Current approaches to LLM memory fall into two failing categories: (1) external retrieval systems (RAG, vector databases) that add latency and lose information at chunk boundaries, and (2) destructive weight updates (MemoryLLM, MEGa) that cause catastrophic forgetting by overwriting old knowledge with new.
+
+We propose a **dual-architecture** within a single model: two subsystems sharing the same forward pass, communicating via internal hidden states — analogous to ROM/RAM in a computer.
+
+- **Cognitive Core** ("ROM") — the pretrained base model. Handles language, reasoning, planning. Changes rarely. Holds general intelligence.
+- **Memory Fabric** ("RAM") — dedicated adapter regions organized by namespace. Changes continuously. Holds personal knowledge, episodic history, verified facts.
+
+The key constraint: **no external retrieval.** Memory lives in the weights. The model doesn't "look up" information — it *knows* it, because the knowledge is part of its neural network. There is no retrieval latency, no context window pressure, no external database to maintain.
+
+### 5.2 Architecture
+
+```
+┌────────────────────────────────────────────────────┐
+│                  SINGLE MODEL                       │
+│                                                    │
+│  ┌─────────────────┐     ┌─────────────────────┐  │
+│  │ COGNITIVE CORE   │     │   MEMORY FABRIC     │  │
+│  │                  │     │                     │  │
+│  │ Base weights     │     │ Multi-adapter LoRA  │  │
+│  │ (FigQuant INT4)  │     │ per namespace:      │  │
+│  │                  │     │  • personal/ (r=8)  │  │
+│  │ Frozen during    │     │  • episodic/ (r=16) │  │
+│  │ memory updates   │     │  • wiki/ (r=32)     │  │
+│  │                  │     │  • schedule/ (r=4)  │  │
+│  │                  │     │  • contested/ (r=4) │  │
+│  └────────┬─────────┘     └──────────┬──────────┘  │
+│           │         GATING           │             │
+│           └────────────┬─────────────┘             │
+│                        │                           │
+│            Internal activation bus                  │
+└────────────────────────────────────────────────────┘
+```
+
+The forward pass flows through both subsystems simultaneously. A learned gating mechanism at middle layers decides how much memory activation to mix into the Cognitive Core's processing. This is not attention over an external key-value store — it is weight-space routing within the model itself.
+
+### 5.3 Multi-Adapter FigLinear
+
+Standard LoRA adds one adapter pair (A, B) per linear layer. The Memory Fabric requires **N parallel adapters** per layer, one per namespace:
+
+```
+output = base_weight(x) + Σᵢ gateᵢ × (x @ Aᵢ) @ Bᵢ × scaleᵢ
+```
+
+where `gateᵢ` ∈ [0, 1] is learned per-namespace and controls how much each memory namespace contributes to the current forward pass. The gate is conditioned on the input — different inputs activate different memory namespaces.
+
+Memory cost: each namespace adapter is small (rank 4-32). For 5 namespaces at average rank 12 on a 2048-dim model: 5 × 2 × 2048 × 12 × 4 bytes = 960 KB per layer. For 32 layers: ~30 MB total Memory Fabric. This fits alongside the FigQuant INT4 Cognitive Core in 8GB RAM.
+
+### 5.4 Confidence as Adapter Magnitude
+
+The Ebbinghaus forgetting curve maps directly to weight decay:
+
+- **High confidence** = high adapter norm. The model holds this knowledge strongly.
+- **Decaying confidence** = adapter weights shrinking via selective weight decay.
+- **Reinforcement** = re-training on the same fact increases adapter magnitude.
+- **Forgetting** = weight decay applied proportionally to time-since-last-access.
+
+At inference, a faded adapter contributes weakly to the output — the model becomes *less certain* about that knowledge without explicitly tracking a confidence number. The uncertainty is structural, not metadata.
+
+### 5.5 The Wiki Layer (Knowledge Consolidation)
+
+The `wiki/` namespace adapter represents verified, permanent knowledge — the model's self-built knowledge base. Information is promoted through a pipeline:
+
+```
+Heard once → episodic/ adapter (high decay, rank 4)
+    ↓ repeated exposure across sessions
+Reinforced → personal/ adapter (medium decay, rank 8)
+    ↓ user confirmation / multi-source agreement
+Verified → wiki/ adapter (near-zero decay, rank 32)
+```
+
+Once in the wiki layer, knowledge is effectively permanent — like how GPT-4 "knows" that Paris is the capital of France. The model built this knowledge from its own experience, not from pretraining data.
+
+### 5.6 Conflict Detection in Activation Space
+
+When the same input activates two namespace adapters that produce opposing hidden states (high cosine distance between their outputs), this signals a conflict:
+
+1. Gating mechanism detects opposing activations
+2. Instead of averaging (which hallucinates a middle ground), routes to `contested/` adapter
+3. Contested adapter holds the uncertainty signal
+4. Cognitive Core generates a response that surfaces the conflict naturally
+5. User resolution → winning version promoted, losing version decayed
+
+This replaces external conflict detection databases with structural neural behavior.
+
+### 5.7 Micro-Training Between Turns
+
+Memory writes occur between conversation turns, not during generation:
+
+1. **During conversation:** Cognitive Core generates. Hidden states at gating layer signal "store this" (learned behavior from Ember token training).
+2. **At turn boundary:** Pending memories buffered as micro-training examples.
+3. **Between turns (target: <100ms):** Fig Engine runs 1-5 LoRA steps on the relevant namespace adapter. FigMeZO enables this even on 8GB machines (no backward pass needed).
+4. **Next turn:** Memory is now in weights. No retrieval needed.
+
+The user experiences zero latency — the model "just remembers."
+
+### 5.8 Relationship to Ember's Diaries
+
+Ember's Diaries provides the **cognitive specification** for how weight-space memory should behave:
+
+| Ember Concept | Weight-Space Implementation |
+|---|---|
+| Immutable records | New adapters coexist with old (no overwrite) |
+| Supersession chains | New adapter layer trained; old one attenuated |
+| Epistemic status | Adapter magnitude = confidence |
+| Decay rate | Selective weight decay proportional to access frequency |
+| Namespaces | Separate LoRA adapters per knowledge domain |
+| Conflict detection | Opposing adapter activations on same input |
+| Consolidation | Merging weak adapters into higher-rank verified adapter |
+| Episode segmentation | Training batch boundaries = episode boundaries |
+| Annotations | Adapter meta-state (training metadata, provenance) |
+
+Ember's Diaries is not an external database — it is the architectural blueprint for neural memory organization.
+
+---
+
+## 6. Conclusion
+
+Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practical. The key architectural decisions are: (1) FigQuant's adaptive codebook reduces quantization error by 5.4% vs NF4 on real model weights (156/156 layers on TinyLlama); (2) FigMeZO exploits the quantization error structure to improve zeroth-order optimization by 18.6% — by probing clean dimensions rather than noisy ones; (3) Sensitivity-guided LISA concentrates training budget on the layers that actually affect the loss; (4) The dual-architecture memory system embeds cognitive memory directly into model weights as a multi-adapter fabric, enabling continuous learning without catastrophic forgetting and without external retrieval systems.
+
+The system treats the model not as a static artifact but as a living cognitive entity that builds its own knowledge base in its own parameters — learning from every interaction, organizing knowledge by confidence and relevance, and maintaining epistemic integrity through structural conflict detection.
 
 ---
 
@@ -256,6 +377,9 @@ Fig Engine demonstrates that CPU-native LLM fine-tuning with 8GB RAM is practica
 4. Lv, K., et al. (2023). "Full Parameter Fine-tuning for Large Language Models with Limited Resources." arxiv 2306.09782.
 5. Dettmers, T., et al. (2023). "QLoRA: Efficient Finetuning of Quantized Language Models." NeurIPS 2023.
 6. Lin, J., et al. (2024). "AWQ: Activation-aware Weight Quantization." MLSys 2024.
+7. Conway, M.A. (2005). "Memory and the Self." Journal of Memory and Language.
+8. Wang, Y., et al. (2024). "MEMORYLLM: Towards Self-Updatable Large Language Models." arXiv:2402.04624.
+9. Fountas, Z., et al. (2024). "Human-inspired Episodic Memory for Infinite Context LLMs." arXiv:2407.09450.
 
 ---
 

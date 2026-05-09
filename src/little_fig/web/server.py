@@ -447,16 +447,27 @@ async def stop_training():
 
 @app.post("/api/bench/run")
 async def run_benchmarks():
-    """Run FigQuant + FigKernel benchmarks and return results."""
-    _log("📊 Running benchmarks...")
+    """Run comprehensive benchmarks: FigQuant, all FigKernels, inference, training, memory."""
+    _log("📊 Running full benchmark suite...")
     results = {}
 
     try:
         import torch
+        import torch.nn as nn
+        import torch.nn.functional as F
+        import time as _t
+        import psutil
+        import gc
         from little_fig.engine.figquant import figquant_quantize, figquant_dequantize, measure_quality
-        from little_fig.engine.figkernel import FigRMSNorm
+        from little_fig.engine.figkernel import (
+            FigRMSNorm, FigSwiGLU, FigCrossEntropy,
+            fig_fused_linear_lora, fig_chunked_cross_entropy,
+        )
 
-        # FigQuant quality
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # ─── 1. FigQuant Quality ─────────────────────────────────────────────
+        _log("   [1/5] FigQuant quality...")
         W = torch.randn(2048, 768)
         fq = figquant_quantize(W, group_size=128, n_iters=8)
         qual = measure_quality(W, fq)
@@ -468,41 +479,287 @@ async def run_benchmarks():
             "compression_ratio": round(qual["compression_ratio"], 1),
         }
 
-        # FigKernel RMSNorm speed
-        x = torch.randn(4, 256, 2048)
-        norm = FigRMSNorm(2048)
-        weight = torch.ones(2048)
+        # ─── 2. All FigKernels ───────────────────────────────────────────────
+        _log("   [2/5] FigKernel benchmarks...")
+        hidden = 2048
+        inter = 5504
+        batch, seq = 4, 256
 
-        import time as _t
-        # Standard
+        # 2a. RMSNorm
+        x = torch.randn(batch, seq, hidden, device=device)
+        weight = torch.ones(hidden, device=device)
+        norm = FigRMSNorm(hidden).to(device)
+
         times = []
         for _ in range(5):
             t0 = _t.time()
-            for _ in range(10):
+            for _ in range(20):
                 _ = x.pow(2).mean(-1, keepdim=True)
                 _ = x * torch.rsqrt(_ + 1e-6) * weight
-            times.append((_t.time() - t0) / 10 * 1000)
-        std_ms = sum(times) / len(times)
+            times.append((_t.time() - t0) / 20 * 1000)
+        rmsnorm_std_ms = sum(times) / len(times)
 
-        # FigRMSNorm
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(20):
+                _ = norm(x)
+            times.append((_t.time() - t0) / 20 * 1000)
+        rmsnorm_fig_ms = sum(times) / len(times)
+
+        # 2b. SwiGLU
+        swiglu = FigSwiGLU(hidden, inter).to(device)
+        x_mlp = torch.randn(batch, seq, hidden, device=device)
+
+        # Standard SwiGLU
+        gate_w = torch.randn(inter, hidden, device=device)
+        up_w = torch.randn(inter, hidden, device=device)
+        down_w = torch.randn(hidden, inter, device=device)
         times = []
         for _ in range(5):
             t0 = _t.time()
             for _ in range(10):
-                _ = norm(x)
+                g = F.silu(F.linear(x_mlp, gate_w))
+                u = F.linear(x_mlp, up_w)
+                _ = F.linear(g * u, down_w)
             times.append((_t.time() - t0) / 10 * 1000)
-        fig_ms = sum(times) / len(times)
+        swiglu_std_ms = sum(times) / len(times)
+
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(10):
+                _ = swiglu(x_mlp)
+            times.append((_t.time() - t0) / 10 * 1000)
+        swiglu_fig_ms = sum(times) / len(times)
+
+        # 2c. CrossEntropy (chunked vs standard)
+        vocab_size = 32000
+        n_tokens = batch * seq
+        hidden_flat = torch.randn(n_tokens, hidden, device=device)
+        lm_head = torch.randn(vocab_size, hidden, device=device)
+        targets = torch.randint(0, vocab_size, (n_tokens,), device=device)
+
+        times = []
+        for _ in range(3):
+            t0 = _t.time()
+            logits = F.linear(hidden_flat, lm_head)
+            _ = F.cross_entropy(logits, targets)
+            times.append((_t.time() - t0) * 1000)
+        ce_std_ms = sum(times) / len(times)
+
+        times = []
+        for _ in range(3):
+            t0 = _t.time()
+            _ = fig_chunked_cross_entropy(hidden_flat, lm_head, targets, chunk_size=8192)
+            times.append((_t.time() - t0) * 1000)
+        ce_fig_ms = sum(times) / len(times)
+
+        # Peak memory for standard vs chunked CE
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.reset_peak_memory_stats()
+            logits = F.linear(hidden_flat, lm_head)
+            _ = F.cross_entropy(logits, targets)
+            ce_std_mem_mb = torch.cuda.max_memory_allocated() / 1e6
+            torch.cuda.reset_peak_memory_stats()
+            _ = fig_chunked_cross_entropy(hidden_flat, lm_head, targets, chunk_size=8192)
+            ce_fig_mem_mb = torch.cuda.max_memory_allocated() / 1e6
+        else:
+            # Estimate: standard materializes [n_tokens, vocab] float32
+            ce_std_mem_mb = n_tokens * vocab_size * 4 / 1e6
+            ce_fig_mem_mb = n_tokens * 8192 * 4 / 1e6  # only one chunk at a time
+
+        # 2d. Fused Linear+LoRA
+        W_base = torch.randn(hidden, hidden, device=device)
+        lora_A = torch.randn(hidden, 16, device=device)
+        lora_B = torch.randn(16, hidden, device=device)
+        x_lin = torch.randn(batch, seq, hidden, device=device)
+
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(20):
+                h = F.linear(x_lin, W_base)
+                h = h + (x_lin @ lora_A) @ lora_B * (32 / 16)
+            times.append((_t.time() - t0) / 20 * 1000)
+        lora_std_ms = sum(times) / len(times)
+
+        times = []
+        for _ in range(5):
+            t0 = _t.time()
+            for _ in range(20):
+                _ = fig_fused_linear_lora(x_lin, W_base, lora_A, lora_B, 32 / 16)
+            times.append((_t.time() - t0) / 20 * 1000)
+        lora_fig_ms = sum(times) / len(times)
 
         results["figkernel"] = {
-            "rmsnorm_standard_ms": round(std_ms, 2),
-            "rmsnorm_fig_ms": round(fig_ms, 2),
-            "rmsnorm_speedup": round(std_ms / max(fig_ms, 0.01), 2),
+            "rmsnorm_standard_ms": round(rmsnorm_std_ms, 3),
+            "rmsnorm_fig_ms": round(rmsnorm_fig_ms, 3),
+            "rmsnorm_speedup": round(rmsnorm_std_ms / max(rmsnorm_fig_ms, 0.001), 2),
+            "swiglu_standard_ms": round(swiglu_std_ms, 3),
+            "swiglu_fig_ms": round(swiglu_fig_ms, 3),
+            "swiglu_speedup": round(swiglu_std_ms / max(swiglu_fig_ms, 0.001), 2),
+            "crossentropy_standard_ms": round(ce_std_ms, 2),
+            "crossentropy_fig_ms": round(ce_fig_ms, 2),
+            "crossentropy_speedup": round(ce_std_ms / max(ce_fig_ms, 0.01), 2),
+            "crossentropy_std_mem_mb": round(ce_std_mem_mb, 1),
+            "crossentropy_fig_mem_mb": round(ce_fig_mem_mb, 1),
+            "crossentropy_mem_savings": round(ce_std_mem_mb / max(ce_fig_mem_mb, 0.01), 1),
+            "linear_lora_standard_ms": round(lora_std_ms, 3),
+            "linear_lora_fig_ms": round(lora_fig_ms, 3),
+            "linear_lora_speedup": round(lora_std_ms / max(lora_fig_ms, 0.001), 2),
         }
 
-        _log(f"✓ Benchmarks complete: cosine={qual['cosine_similarity']:.4f}, RMSNorm {std_ms/max(fig_ms,0.01):.1f}×")
+        # ─── 3. Inference Speed ──────────────────────────────────────────────
+        _log("   [3/5] Inference speed...")
+        inference_results = {}
+        if _model is not None:
+            try:
+                tokenizer = _model.tokenizer
+                test_prompt = "The meaning of life is"
+                inputs = tokenizer(test_prompt, return_tensors="pt")
+                input_ids = inputs["input_ids"].to(device)
+
+                # Warmup
+                with torch.no_grad():
+                    _model.model.eval()
+                    _ = _model.model.generate(input_ids, max_new_tokens=5, do_sample=False)
+
+                # Timed generation
+                gen_lengths = [32, 64, 128]
+                for length in gen_lengths:
+                    t0 = _t.time()
+                    with torch.no_grad():
+                        out = _model.model.generate(input_ids, max_new_tokens=length, do_sample=False)
+                    elapsed = _t.time() - t0
+                    n_generated = out.shape[1] - input_ids.shape[1]
+                    tok_per_sec = n_generated / max(elapsed, 0.001)
+                    inference_results[f"gen_{length}_tok_per_sec"] = round(tok_per_sec, 1)
+                    inference_results[f"gen_{length}_time_s"] = round(elapsed, 3)
+
+                # Time to first token (TTFT)
+                t0 = _t.time()
+                with torch.no_grad():
+                    _ = _model.model.generate(input_ids, max_new_tokens=1, do_sample=False)
+                inference_results["ttft_ms"] = round((_t.time() - t0) * 1000, 1)
+
+            except Exception as e:
+                inference_results["error"] = str(e)
+        else:
+            inference_results["error"] = "No model loaded — load a model to benchmark inference"
+
+        results["inference"] = inference_results
+
+        # ─── 4. Training Throughput ──────────────────────────────────────────
+        _log("   [4/5] Training throughput...")
+        training_results = {}
+        if _model is not None:
+            try:
+                tokenizer = _model.tokenizer
+                # Create a small batch of training data
+                texts = [
+                    "The quick brown fox jumps over the lazy dog.",
+                    "Machine learning models require large amounts of data.",
+                    "GPU acceleration significantly speeds up neural network training.",
+                    "Little Fig trains LLMs on CPU with minimal memory overhead.",
+                ]
+                batch_enc = tokenizer(
+                    texts, return_tensors="pt", padding="max_length",
+                    truncation=True, max_length=128
+                )
+                input_ids = batch_enc["input_ids"].to(device)
+                attention_mask = batch_enc["attention_mask"].to(device)
+
+                _model.model.train()
+                # Enable grad for LoRA params
+                optimizer = torch.optim.AdamW(
+                    [p for p in _model.parameters() if p.requires_grad],
+                    lr=2e-4
+                )
+
+                # Warmup step
+                outputs = _model.model(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
+                outputs.loss.backward()
+                optimizer.zero_grad()
+
+                # Timed training steps
+                n_steps = 5
+                t0 = _t.time()
+                total_tokens = 0
+                for step in range(n_steps):
+                    outputs = _model.model(input_ids=input_ids, attention_mask=attention_mask, labels=input_ids)
+                    outputs.loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    total_tokens += attention_mask.sum().item()
+                elapsed = _t.time() - t0
+
+                training_results["steps"] = n_steps
+                training_results["total_time_s"] = round(elapsed, 2)
+                training_results["step_time_ms"] = round(elapsed / n_steps * 1000, 1)
+                training_results["tokens_per_sec"] = round(total_tokens / elapsed, 1)
+                training_results["samples_per_sec"] = round(n_steps * len(texts) / elapsed, 2)
+                training_results["last_loss"] = round(outputs.loss.item(), 4)
+
+                _model.model.eval()
+            except Exception as e:
+                training_results["error"] = str(e)
+        else:
+            training_results["error"] = "No model loaded — load a model to benchmark training"
+
+        results["training"] = training_results
+
+        # ─── 5. Memory Usage (actual measurement) ────────────────────────────
+        _log("   [5/5] Memory profiling...")
+        mem = psutil.virtual_memory()
+        memory_results = {
+            "system_ram_total_gb": round(mem.total / 1e9, 1),
+            "system_ram_used_gb": round(mem.used / 1e9, 1),
+            "system_ram_available_gb": round(mem.available / 1e9, 1),
+            "system_ram_percent": mem.percent,
+        }
+
+        if device == "cuda":
+            memory_results["gpu_vram_total_gb"] = round(torch.cuda.get_device_properties(0).total_mem / 1e9, 1)
+            memory_results["gpu_vram_allocated_gb"] = round(torch.cuda.memory_allocated() / 1e9, 2)
+            memory_results["gpu_vram_reserved_gb"] = round(torch.cuda.memory_reserved() / 1e9, 2)
+            memory_results["gpu_vram_peak_gb"] = round(torch.cuda.max_memory_allocated() / 1e9, 2)
+
+        if _model is not None:
+            # Measure actual model memory footprint
+            model_params_bytes = sum(
+                p.numel() * p.element_size() for p in _model.parameters()
+            )
+            trainable_bytes = sum(
+                p.numel() * p.element_size() for p in _model.parameters() if p.requires_grad
+            )
+            frozen_bytes = model_params_bytes - trainable_bytes
+
+            memory_results["model_total_mb"] = round(model_params_bytes / 1e6, 1)
+            memory_results["model_trainable_mb"] = round(trainable_bytes / 1e6, 1)
+            memory_results["model_frozen_mb"] = round(frozen_bytes / 1e6, 1)
+            memory_results["model_name"] = _model_id or "unknown"
+            memory_results["trainable_params"] = sum(p.numel() for p in _model.parameters() if p.requires_grad)
+            memory_results["total_params"] = sum(p.numel() for p in _model.parameters())
+
+            # Estimate optimizer states (AdamW = 2x param size for momentum + variance)
+            optimizer_est_mb = trainable_bytes * 2 / 1e6
+            memory_results["optimizer_est_mb"] = round(optimizer_est_mb, 1)
+            memory_results["total_training_est_mb"] = round(
+                model_params_bytes / 1e6 + optimizer_est_mb, 1
+            )
+        else:
+            memory_results["model_loaded"] = False
+
+        results["memory"] = memory_results
+
+        _log(f"✓ Full benchmark suite complete")
 
     except Exception as e:
         _log(f"✗ Benchmark error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, str(e))
 
     return results

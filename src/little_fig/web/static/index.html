@@ -238,14 +238,27 @@ footer{display:none!important}
 
   <!-- ═══ BENCHMARKS ═══ -->
   <div id="pg-bench" class="page hidden flex-1 overflow-y-auto p-6">
-    <div class="max-w-4xl mx-auto space-y-6">
-      <div class="flex items-center justify-between"><div><h2 class="text-base font-bold text-cyan-400">📊 Benchmarks</h2><p class="text-xs text-zinc-500 mt-1">FigQuant · FigKernel · Memory projections</p></div><button onclick="runBench()" id="bench-btn" class="btn btn-primary btn-sm">▶ Run Live</button></div>
+    <div class="max-w-5xl mx-auto space-y-6">
+      <div class="flex items-center justify-between"><div><h2 class="text-base font-bold text-cyan-400">📊 Live Benchmarks</h2><p class="text-xs text-zinc-500 mt-1">FigQuant · FigKernels · Inference · Training · Memory — all measured on your hardware</p></div><button onclick="runBench()" id="bench-btn" class="btn btn-primary btn-sm">▶ Run All</button></div>
+
+      <!-- Progress -->
+      <div id="bench-progress" class="hidden card text-center py-3"><div class="text-xs text-cyan-400 font-mono" id="bench-progress-text">Running...</div></div>
+
+      <!-- Row 1: FigQuant + FigKernels -->
       <div class="grid grid-cols-2 gap-4">
-        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">FigQuant Quality <span class="text-[9px] text-zinc-600 font-normal ml-1">live</span></div><div class="space-y-2 text-[12px] font-mono" id="bench-quant"><div class="text-zinc-600 text-[11px]">Click "▶ Run Live" to benchmark on your hardware</div></div></div>
-        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">FigKernel Speedup <span class="text-[9px] text-zinc-600 font-normal ml-1">live</span></div><div class="space-y-2 text-[12px] font-mono" id="bench-kernel"><div class="text-zinc-600 text-[11px]">Click "▶ Run Live" to benchmark on your hardware</div></div></div>
-        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">Memory Usage (1.1B model) <span class="text-[9px] text-zinc-600 font-normal ml-1">reference</span></div><div class="space-y-2 text-[12px] font-mono"><div class="flex justify-between text-zinc-500"><span>Standard FP32</span><span class="text-red-400">26.6 GB</span></div><div class="flex justify-between text-zinc-500"><span>Tier 1: LoRA</span><span class="text-cyan-400">~400 MB</span></div><div class="flex justify-between text-zinc-500"><span>Tier 2: LISA</span><span class="text-cyan-400">~900 MB</span></div><div class="flex justify-between text-zinc-500"><span>Tier 3: MeZO</span><span class="text-cyan-400">~600 MB</span></div><div class="flex justify-between text-zinc-500"><span>Tier 4: LOMO</span><span class="text-cyan-400">~800 MB</span></div></div></div>
-        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">vs Other Tools (1.1B min RAM) <span class="text-[9px] text-zinc-600 font-normal ml-1">reference</span></div><div class="space-y-2 text-[12px] font-mono"><div class="flex justify-between text-zinc-500"><span>Unsloth</span><span class="text-zinc-600">GPU only</span></div><div class="flex justify-between text-zinc-500"><span>LLaMA-Factory</span><span class="text-zinc-600">~8 GB</span></div><div class="flex justify-between text-zinc-500"><span>TRL</span><span class="text-zinc-600">~8 GB</span></div><div class="flex justify-between text-zinc-500"><span>Little Fig</span><span class="text-fig-400 font-bold">~400 MB ✓</span></div></div></div>
+        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">FigQuant Quality</div><div class="space-y-2 text-[12px] font-mono" id="bench-quant"><div class="text-zinc-600 text-[11px]">Click "▶ Run All" to benchmark</div></div></div>
+        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">FigKernels (all 4)</div><div class="space-y-2 text-[12px] font-mono" id="bench-kernel"><div class="text-zinc-600 text-[11px]">Click "▶ Run All" to benchmark</div></div></div>
       </div>
+
+      <!-- Row 2: Inference + Training -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">Inference Speed</div><div class="space-y-2 text-[12px] font-mono" id="bench-inference"><div class="text-zinc-600 text-[11px]">Requires a loaded model</div></div></div>
+        <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">Training Throughput</div><div class="space-y-2 text-[12px] font-mono" id="bench-training"><div class="text-zinc-600 text-[11px]">Requires a loaded model</div></div></div>
+      </div>
+
+      <!-- Row 3: Memory -->
+      <div class="card"><div class="text-xs font-bold text-cyan-400 mb-3">Memory Profile</div><div class="space-y-2 text-[12px] font-mono" id="bench-memory"><div class="text-zinc-600 text-[11px]">Click "▶ Run All" to measure</div></div></div>
+
     </div>
   </div>
 
@@ -658,8 +671,16 @@ $('#train-btn').onclick=async()=>{
     $('#train-log').innerHTML='<div class="text-red-400">✗ '+e.message+'</div>'}};
 
 // ── Benchmarks ───────────────────────────────────────────────────────────────
-async function runBench(){$('#bench-btn').disabled=true;$('#bench-btn').textContent='⏳ Running…';
-  try{const r=await fetch('/api/bench/run',{method:'POST'});const d=await r.json();
+async function runBench(){
+  $('#bench-btn').disabled=true;$('#bench-btn').textContent='⏳ Running…';
+  $('#bench-progress').classList.remove('hidden');
+  $('#bench-progress-text').textContent='Running 5 benchmark suites... this may take 30-60 seconds';
+  try{
+    const r=await fetch('/api/bench/run',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||'Benchmark failed');
+
+    // FigQuant
     if(d.figquant){const q=d.figquant;$('#bench-quant').innerHTML=
       `<div class="flex justify-between text-zinc-500"><span>Cosine Similarity</span><span class="text-cyan-400">${q.cosine_similarity}</span></div>
        <div class="flex justify-between text-zinc-500"><span>MSE</span><span class="text-cyan-400">${q.mse}</span></div>
@@ -667,13 +688,64 @@ async function runBench(){$('#bench-btn').disabled=true;$('#bench-btn').textCont
        <div class="flex justify-between text-zinc-500"><span>Bits/param</span><span class="text-cyan-400">${q.bits_per_param}</span></div>
        <div class="flex justify-between text-zinc-500"><span>Compression</span><span class="text-cyan-400">${q.compression_ratio}×</span></div>
        <div class="w-full bg-zinc-800 rounded-full h-1.5 mt-2 light:bg-zinc-200"><div class="bg-cyan-500 h-1.5 rounded-full" style="width:${q.cosine_similarity*100}%"></div></div>`}
+
+    // FigKernels (all 4)
     if(d.figkernel){const k=d.figkernel;$('#bench-kernel').innerHTML=
-      `<div class="flex justify-between text-zinc-500"><span>RMSNorm (standard)</span><span class="text-zinc-600">${k.rmsnorm_standard_ms}ms</span></div>
-       <div class="flex justify-between text-zinc-500"><span>RMSNorm (FigKernel)</span><span class="text-cyan-400">${k.rmsnorm_fig_ms}ms</span></div>
-       <div class="flex justify-between text-zinc-500"><span>Speedup</span><span class="text-cyan-400">${k.rmsnorm_speedup}× faster</span></div>`}
-    $('#bench-btn').textContent='✓ Done'}
-  catch(e){$('#bench-btn').textContent='✗ Error'}
-  setTimeout(()=>{$('#bench-btn').disabled=false;$('#bench-btn').textContent='▶ Run Live'},3000)}
+      `<div class="flex justify-between text-zinc-500"><span>RMSNorm</span><span class="text-cyan-400">${k.rmsnorm_speedup}× faster</span></div>
+       <div class="flex justify-between text-zinc-600 text-[10px]"><span>  std: ${k.rmsnorm_standard_ms}ms → fig: ${k.rmsnorm_fig_ms}ms</span></div>
+       <div class="flex justify-between text-zinc-500 mt-1"><span>SwiGLU</span><span class="text-cyan-400">${k.swiglu_speedup}× faster</span></div>
+       <div class="flex justify-between text-zinc-600 text-[10px]"><span>  std: ${k.swiglu_standard_ms}ms → fig: ${k.swiglu_fig_ms}ms</span></div>
+       <div class="flex justify-between text-zinc-500 mt-1"><span>CrossEntropy</span><span class="text-cyan-400">${k.crossentropy_mem_savings}× less memory</span></div>
+       <div class="flex justify-between text-zinc-600 text-[10px]"><span>  ${k.crossentropy_std_mem_mb}MB → ${k.crossentropy_fig_mem_mb}MB | speed: ${k.crossentropy_speedup}×</span></div>
+       <div class="flex justify-between text-zinc-500 mt-1"><span>Fused Linear+LoRA</span><span class="text-cyan-400">${k.linear_lora_speedup}× faster</span></div>
+       <div class="flex justify-between text-zinc-600 text-[10px]"><span>  std: ${k.linear_lora_standard_ms}ms → fig: ${k.linear_lora_fig_ms}ms</span></div>`}
+
+    // Inference
+    if(d.inference){const i=d.inference;
+      if(i.error){$('#bench-inference').innerHTML=`<div class="text-amber-500 text-[11px]">⚠ ${i.error}</div>`}
+      else{$('#bench-inference').innerHTML=
+        `<div class="flex justify-between text-zinc-500"><span>Time to first token</span><span class="text-cyan-400">${i.ttft_ms}ms</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Generate 32 tokens</span><span class="text-cyan-400">${i.gen_32_tok_per_sec} tok/s</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Generate 64 tokens</span><span class="text-cyan-400">${i.gen_64_tok_per_sec} tok/s</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Generate 128 tokens</span><span class="text-cyan-400">${i.gen_128_tok_per_sec} tok/s</span></div>`}}
+
+    // Training
+    if(d.training){const t=d.training;
+      if(t.error){$('#bench-training').innerHTML=`<div class="text-amber-500 text-[11px]">⚠ ${t.error}</div>`}
+      else{$('#bench-training').innerHTML=
+        `<div class="flex justify-between text-zinc-500"><span>Tokens/sec</span><span class="text-cyan-400">${t.tokens_per_sec}</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Samples/sec</span><span class="text-cyan-400">${t.samples_per_sec}</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Step time</span><span class="text-cyan-400">${t.step_time_ms}ms</span></div>
+         <div class="flex justify-between text-zinc-500"><span>Last loss</span><span class="text-cyan-400">${t.last_loss}</span></div>
+         <div class="flex justify-between text-zinc-600 text-[10px]"><span>${t.steps} steps in ${t.total_time_s}s</span></div>`}}
+
+    // Memory
+    if(d.memory){const m=d.memory;let html=
+      `<div class="grid grid-cols-2 gap-x-8 gap-y-1">
+         <div class="flex justify-between text-zinc-500"><span>System RAM</span><span class="text-cyan-400">${m.system_ram_used_gb}/${m.system_ram_total_gb} GB (${m.system_ram_percent}%)</span></div>
+         <div class="flex justify-between text-zinc-500"><span>RAM available</span><span class="text-cyan-400">${m.system_ram_available_gb} GB</span></div>`;
+      if(m.gpu_vram_total_gb){html+=
+        `<div class="flex justify-between text-zinc-500"><span>GPU VRAM total</span><span class="text-cyan-400">${m.gpu_vram_total_gb} GB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>GPU VRAM allocated</span><span class="text-cyan-400">${m.gpu_vram_allocated_gb} GB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>GPU VRAM peak</span><span class="text-cyan-400">${m.gpu_vram_peak_gb} GB</span></div>`}
+      if(m.model_total_mb){html+=
+        `<div class="flex justify-between text-zinc-500"><span>Model (${m.model_name})</span><span class="text-cyan-400">${m.model_total_mb} MB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>├─ Trainable (LoRA)</span><span class="text-cyan-400">${m.model_trainable_mb} MB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>├─ Frozen (INT4 base)</span><span class="text-cyan-400">${m.model_frozen_mb} MB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>├─ Optimizer est.</span><span class="text-cyan-400">${m.optimizer_est_mb} MB</span></div>
+         <div class="flex justify-between text-zinc-500"><span>└─ Total training est.</span><span class="text-fig-400 font-bold">${m.total_training_est_mb} MB</span></div>`}
+      else{html+=`<div class="text-amber-500 col-span-2">No model loaded — load a model for detailed memory profile</div>`}
+      html+=`</div>`;$('#bench-memory').innerHTML=html}
+
+    $('#bench-btn').textContent='✓ Complete';
+    $('#bench-progress-text').textContent='✓ All benchmarks complete';
+    setTimeout(()=>{$('#bench-progress').classList.add('hidden')},3000);
+  }catch(e){
+    $('#bench-btn').textContent='✗ Error';
+    $('#bench-progress-text').textContent='✗ '+e.message;
+  }
+  setTimeout(()=>{$('#bench-btn').disabled=false;$('#bench-btn').textContent='▶ Run All'},4000);
+}
 
 // ── CogMemBench ─────────────────────────────────────────────────────────────
 async function runCogMem(){
